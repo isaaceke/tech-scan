@@ -1,0 +1,51 @@
+# Built Application Binaries & Packages
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Gradle and Build Directories
+.gradle/
+**/build/
+**/.gradle/
+**/bin/
+**/out/
+**/gen/
+
+# Android Studio & IntelliJ Project Files
+.idea/
+**/.idea/
+*.iml
+**/*.iml
+.vscode/
+
+# Local Environment and SDK Configurations
+local.properties
+**/local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+**/.cxx/
+
+# Operating System & Temporary Files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+.tmp.driveupload/
+*.log
+**/*.log
+*.bak
+**/*.bak
+
+# Python byte-code & caches
+__pycache__/
+**/__pycache__/
+*.pyc
+
+# Scratch intermediate test scripts and backups
+.SCRATCH/backups/
+.SCRATCH/reference_screens/
+.SCRATCH/*.py
+.SCRATCH/*.html
+.SCRATCH/*.svg
+.SCRATCH/*.ps1

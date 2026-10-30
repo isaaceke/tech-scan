@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- Viewfinder Scanner Brackets (Corners) -->
+    <!-- Top-Left -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:pathData="M 32,40 L 32,32 L 40,32" />
+    <!-- Top-Right -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:pathData="M 68,32 L 76,32 L 76,40" />
+    <!-- Bottom-Left -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:pathData="M 32,68 L 32,76 L 40,76" />
+    <!-- Bottom-Right -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:pathData="M 68,76 L 76,76 L 76,68" />
+
+    <!-- Sleek Aircraft Silhouette in Center -->
+    <!-- Fuselage & Wings pointing upwards -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M 54,34 L 56,44 L 72,55 L 72,58 L 56,54 L 56,66 L 62,71 L 62,74 L 54,72 L 46,74 L 46,71 L 52,66 L 52,54 L 36,58 L 36,55 L 52,44 Z" />
+
+    <!-- Scanner Target Dot / Crosshair -->
+    <path
+        android:fillColor="#10B981"
+        android:pathData="M 54,54m-2,0a2,2 0 1,0 4,0a2,2 0 1,0 -4,0" />
+</vector>
