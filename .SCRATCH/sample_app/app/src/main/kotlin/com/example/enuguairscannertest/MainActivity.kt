@@ -118,6 +118,7 @@ fun saveLastLogForAircraft(prefs: SharedPreferences, ac: String, logNum: String)
 
 class MainActivity : ComponentActivity() {
     private var authCallback: ((Boolean, String) -> Unit)? = null
+    private var authVerifyingCallback: (() -> Unit)? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -155,7 +156,8 @@ class MainActivity : ComponentActivity() {
                     color = Color.Black
                 ) {
                     EnuguAirScannerApp(
-                        onRegisterAuthCallback = { cb -> authCallback = cb }
+                        onRegisterAuthCallback = { cb -> authCallback = cb },
+                        onRegisterVerifyingCallback = { cb -> authVerifyingCallback = cb }
                     )
                 }
             }
@@ -171,6 +173,7 @@ class MainActivity : ComponentActivity() {
     private fun handleOAuthIntent(intent: Intent?) {
         val data = intent?.data ?: return
         if (data.scheme == "techlogscan" && data.host == "auth") {
+            authVerifyingCallback?.invoke()
             val prefs = getSharedPreferences("techlog_scanner_prefs", Context.MODE_PRIVATE)
             lifecycleScope.launch {
                 val (success, result) = MicrosoftOAuthManager.handleAuthRedirect(intent, prefs)
@@ -204,7 +207,8 @@ data class AuditorTask(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EnuguAirScannerApp(
-    onRegisterAuthCallback: (((Boolean, String) -> Unit) -> Unit)? = null
+    onRegisterAuthCallback: (((Boolean, String) -> Unit) -> Unit)? = null,
+    onRegisterVerifyingCallback: ((() -> Unit) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("techlog_scanner_prefs", Context.MODE_PRIVATE) }
@@ -216,14 +220,34 @@ fun EnuguAirScannerApp(
     var microsoftConnectedEmail by remember {
         mutableStateOf(MicrosoftOAuthManager.getConnectedEmail(prefs))
     }
+    var authState by remember { mutableStateOf("IDLE") } // "IDLE", "SIGNING_IN", "VERIFYING", "TIMEOUT", "ERROR"
+    var authErrorMessage by remember { mutableStateOf<String?>(null) }
+
+    // Auto-timeout: If in SIGNING_IN for > 14 seconds without intent, reset to TIMEOUT
+    LaunchedEffect(authState) {
+        if (authState == "SIGNING_IN") {
+            kotlinx.coroutines.delay(14000L)
+            if (authState == "SIGNING_IN") {
+                authState = "TIMEOUT"
+                authErrorMessage = "Sign-in didn't complete. Tap to retry."
+            }
+        }
+    }
 
     LaunchedEffect(Unit) {
+        onRegisterVerifyingCallback?.invoke {
+            authState = "VERIFYING"
+        }
         onRegisterAuthCallback?.invoke { success, result ->
             if (success) {
                 isMicrosoftConnected = true
                 microsoftConnectedEmail = result
+                authState = "IDLE"
+                authErrorMessage = null
             } else {
                 isMicrosoftConnected = false
+                authState = "ERROR"
+                authErrorMessage = result
             }
         }
     }
@@ -298,13 +322,23 @@ fun EnuguAirScannerApp(
             },
             isMicrosoftConnected = isMicrosoftConnected,
             microsoftEmail = microsoftConnectedEmail,
+            authState = authState,
+            authErrorMessage = authErrorMessage,
             onConnectMicrosoft = {
+                authState = "SIGNING_IN"
+                authErrorMessage = null
                 MicrosoftOAuthManager.startSignIn(context, prefs)
+            },
+            onCancelAuth = {
+                authState = "IDLE"
+                authErrorMessage = null
             },
             onDisconnectMicrosoft = {
                 MicrosoftOAuthManager.disconnect(prefs)
                 isMicrosoftConnected = false
                 microsoftConnectedEmail = null
+                authState = "IDLE"
+                authErrorMessage = null
                 Toast.makeText(context, "Disconnected Microsoft account", Toast.LENGTH_SHORT).show()
             },
             isOneDriveLinked = linkedTreeUriString != null,
@@ -391,7 +425,10 @@ fun SettingsDialog(
     onUpdateFleet: (List<String>) -> Unit,
     isMicrosoftConnected: Boolean,
     microsoftEmail: String?,
+    authState: String,
+    authErrorMessage: String?,
     onConnectMicrosoft: () -> Unit,
+    onCancelAuth: () -> Unit,
     onDisconnectMicrosoft: () -> Unit,
     isOneDriveLinked: Boolean,
     onLinkOneDrive: () -> Unit,
@@ -482,21 +519,106 @@ fun SettingsDialog(
                             )
                         }
                     }
-                } else {
-                    Button(
-                        onClick = { onConnectMicrosoft() },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color.White),
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                    ) {
-                        Text(
-                            text = "CONNECT MICROSOFT 365",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.Black
-                        )
+                } else when (authState) {
+                    "SIGNING_IN" -> {
+                        Surface(
+                            color = Color(0xFF27272A),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(14.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = "SIGNING YOU IN...",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                LinearProgressIndicator(
+                                    color = Color.White,
+                                    trackColor = Color(0xFF3F3F46),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Text(
+                                    text = "CANCEL",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFA1A1AA),
+                                    modifier = Modifier.clickable { onCancelAuth() }
+                                )
+                            }
+                        }
+                    }
+                    "VERIFYING" -> {
+                        Surface(
+                            color = Color(0xFF27272A),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(14.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = "VERIFYING ACCOUNT & TOKEN...",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                LinearProgressIndicator(
+                                    color = Color(0xFF10B981),
+                                    trackColor = Color(0xFF3F3F46),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        }
+                    }
+                    else -> {
+                        // IDLE, TIMEOUT, or ERROR
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            if (!authErrorMessage.isNullOrBlank()) {
+                                Surface(
+                                    color = Color(0xFF3F1D1D),
+                                    shape = RoundedCornerShape(6.dp),
+                                    border = BorderStroke(1.dp, Color(0xFF7F1D1D)),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(bottom = 8.dp)
+                                ) {
+                                    Text(
+                                        text = authErrorMessage,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = Color(0xFFFCA5A5),
+                                        modifier = Modifier.padding(10.dp)
+                                    )
+                                }
+                            }
+                            Button(
+                                onClick = { onConnectMicrosoft() },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color.White),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                            ) {
+                                Text(
+                                    text = if (authState == "TIMEOUT" || authState == "ERROR") "TRY CONNECTING AGAIN" else "CONNECT MICROSOFT 365",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.Black
+                                )
+                            }
+                        }
                     }
                 }
 
