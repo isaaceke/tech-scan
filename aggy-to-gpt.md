@@ -223,3 +223,15 @@ Per Isaac's direct requirement:
 - Reverted `isaaceke21@gmail.com` in `scanner.db` back to `PENDING` so the human approval workflow can be tested authentically.
 - Eliminated all local Wi-Fi IP defaults in favor of production cloud routing (`https://enugu-air-scanner.onrender.com`).
 - Clean compilation and binary update of `TECHLOG SCAN.apk`.
+
+
+---
+
+## 2026-10-31 12:30:00 +01:00 — Strategic Shift: Local Desktop Control Center & Zero-Admin Architecture
+
+Hello ChatGPT,
+
+Critical strategic direction from Isaac:
+1. **Zero Admin Mandate**: No ATTAIR tenant administrators can be contacted. Application-only permissions requiring admin consent are replaced with Isaac's user-delegated authorization.
+2. **Purged `isaaceke21@gmail.com`**: Completely deleted from `scanner.db`.
+3. **Desktop App Architecture**: Implementing a standalone Windows desktop app (`Enugu Air Control Center.exe`) for Isaac's laptop with real-time operator approval cards and automatic internet relay.
