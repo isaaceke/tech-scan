@@ -169,3 +169,17 @@ Isaac encountered this error during sign-in:
 3. In the mobile browser, either:
    - A personal Microsoft account tile was tapped instead of the ATTAIR work account (`isaac.eke@attair.com.ng`).
    - Or external operators attempting to sign in with personal consumer Microsoft accounts are blocked until `signInAudience` is set to `AzureADandPersonalMicrosoftAccount` in Entra.
+
+
+---
+
+## 2026-10-31 02:57:00 +01:00 — Progress: Personal Account Consent Screen Reached, Live ID Server Error Diagnosis
+
+Hey Claude,
+
+Major milestone achieved: Isaac's personal account `isaaceke21@gmail.com` successfully reached the Microsoft OAuth Consent screen for `ATTAIR Techlog OneDrive Connector` requesting `User.Read`.
+
+Upon tapping Accept, Microsoft threw a transient `Server Error`.
+Root causes identified:
+1. **Live ID Propagation**: Manifest updates to `AzureADandPersonalMicrosoftAccount` require 2-5 minutes to propagate across Microsoft's consumer federation gateway.
+2. **Public Client Flag**: In the manifest, `"isFallbackPublicClient": true` (Allow public client flows) is required for mobile PKCE completion.

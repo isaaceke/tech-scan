@@ -156,3 +156,16 @@ Diagnostic report on sign-in error `unauthorized_client: The client does not exi
 - The client ID `dc7101d3-3bb7-462f-92e8-374958f4ddb5` is registered for organizational accounts (Work or School accounts).
 - Probing confirmed that `/organizations/` and the ATTAIR tenant ID (`38de9dec-d800-439b-a669-60f628a90e72`) both return HTTP 200.
 - When an operator selects a Personal Microsoft Account (Outlook.com, Hotmail, or personal account), Microsoft Live ID rejects the client because the Entra App registration is not yet configured for `AzureADandPersonalMicrosoftAccount`.
+
+
+---
+
+## 2026-10-31 02:57:00 +01:00 — Progress: Personal Account Consent Screen Reached, Live ID Server Error Diagnosis
+
+Hello ChatGPT,
+
+Major milestone: Isaac successfully verified personal Microsoft account authentication (`isaaceke21@gmail.com`) reaching the consent screen for `ATTAIR Techlog OneDrive Connector`.
+
+To resolve the transient `Server Error` upon tapping Accept:
+- Enable `"isFallbackPublicClient": true` in Entra manifest (or Authentication -> Allow public client flows: Yes).
+- Allow the 2-5 minute Microsoft global propagation window to finish.
