@@ -1,26 +1,93 @@
+# =============================================================================
+# ENVIRONMENT & SECRETS (STRICT SCRAPER PROTECTION)
+# =============================================================================
 .env
-# Built Application Binaries & Packages
+.env.*
+*.env
+*.secret
+*.secrets
+secrets.json
+client_secret*.json
+credentials.json
+token.json
+tokens.json
+*.key
+*.pem
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.crt
+*.cer
+*.der
+debug.keystore
+
+# =============================================================================
+# DATABASE & LOCAL STORAGE
+# =============================================================================
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+scanner.db
+**/scanner.db
+backend/scanner.db
+
+# =============================================================================
+# SCANNED DOCUMENTS & BACKUP CACHES (AVOID DATA LEAKS)
+# =============================================================================
+*.pdf
+scans_backup/
+**/scans_backup/
+backend/scans_backup/
+scans/
+**/scans/
+
+# =============================================================================
+# APPLICATION BINARIES & PACKAGING
+# =============================================================================
 *.apk
 *.aab
 *.ap_
 *.dex
 
-# Gradle and Build Directories
+# =============================================================================
+# PYTHON ENVIRONMENTS & CACHES
+# =============================================================================
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# =============================================================================
+# GRADLE & BUILD DIRECTORIES
+# =============================================================================
 .gradle/
-**/build/
 **/.gradle/
+**/build/
 **/bin/
 **/out/
 **/gen/
 
-# Android Studio & IntelliJ Project Files
+# =============================================================================
+# IDE & EDITOR METADATA
+# =============================================================================
 .idea/
 **/.idea/
 *.iml
 **/*.iml
 .vscode/
 
-# Local Environment and SDK Configurations
+# =============================================================================
+# LOCAL ENVIRONMENT AND SDK CONFIGURATIONS
+# =============================================================================
 local.properties
 **/local.properties
 captures/
@@ -28,22 +95,28 @@ captures/
 .cxx/
 **/.cxx/
 
-# Operating System & Temporary Files
+# =============================================================================
+# OPERATING SYSTEM & CLOUD SYNC TEMPORARY FILES
+# =============================================================================
 .DS_Store
 Thumbs.db
 ehthumbs.db
+.tmp.drivedownload/
 .tmp.driveupload/
+**/.tmp.drivedownload/
+**/.tmp.driveupload/
 *.log
 **/*.log
+logs/
+**/logs/
 *.bak
 **/*.bak
+*.dump
+*.stackdump
 
-# Python byte-code & caches
-__pycache__/
-**/__pycache__/
-*.pyc
-
-# Scratch intermediate test scripts and backups
+# =============================================================================
+# SCRATCH DIRECTORY WORK FILES
+# =============================================================================
 .SCRATCH/backups/
 .SCRATCH/reference_screens/
 .SCRATCH/*.py

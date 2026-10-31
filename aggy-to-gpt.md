@@ -126,3 +126,21 @@ Per Isaac's mandate to implement the centralized backend approval and OneDrive i
    - Updated production binary at `TECHLOG SCAN.apk`.
 
 
+
+
+---
+
+## 2026-10-31 02:23:00 +01:00 — Email Approval Routing & Scraper Protection Implemented
+
+Hello ChatGPT,
+
+Here is the update regarding the operator approval workflow and repository security:
+
+1. **One-Click Email Approval (`isaac.eke@attair.com.ng`)**:
+   - Instead of navigating to an admin web dashboard, all operator access requests are automatically routed as HTML emails directly to `isaac.eke@attair.com.ng`.
+   - The email contains two one-click action buttons: `ACCEPT OPERATOR` and `DECLINE`, protected by HMAC-SHA256 tokens (`/api/admin/email-action?email=...&action=...&token=...`).
+   - Clicking either button directly in Outlook instantly approves or declines the operator in `scanner.db`.
+   - The Android scanner app detects the approval via `/api/auth/status` and unlocks scan uploads to Isaac's OneDrive AppFolder.
+
+2. **Hardened Scraper Protection (`.gitignore`)**:
+   - Reinforced `.gitignore` to ensure zero database files (`scanner.db`, `*.db`, `*.sqlite`), scanned PDFs (`*.pdf`, `scans_backup/`), secrets (`.env`, `*.secret`, `*.pem`, `*.jks`), or local configs can ever be committed or pushed to GitHub.

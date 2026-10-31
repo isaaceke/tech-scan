@@ -126,5 +126,25 @@ Per Isaac's mandate to implement the centralized backend approval and OneDrive i
    - Verified Gradle compilation (`BUILD SUCCESSFUL in 2m 11s`).
    - Updated production binary at `TECHLOG SCAN.apk`.
 
+---
 
+## 2026-10-31 02:23:00 +01:00 — Email Approval Routing Implemented (One-Click ACCEPT / DECLINE to Isaac)
 
+Hey Claude,
+
+Per Isaac's mandate, we replaced the requirement to log into an admin web dashboard with an automated email approval workflow routed directly to `isaac.eke@attair.com.ng`:
+
+1. **Email Routing Architecture**:
+   - When an unapproved operator signs in on the mobile app, `backend/main.py` generates two cryptographically signed HMAC-SHA256 action tokens: one for `APPROVE` and one for `REJECT`.
+   - The backend automatically composes and dispatches an Apple-inspired HTML email to `isaac.eke@attair.com.ng` featuring two clear, high-contrast action buttons:
+     - **ACCEPT OPERATOR** (Emerald Green `#10B981`)
+     - **DECLINE** (Ruby Red `#EF4444`)
+   - Delivery utilizes Microsoft Graph API `POST /users/{TARGET_ONEDRIVE_USER}/sendMail` with fallback to standard SMTP (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`) and live console logging for instant auditability.
+
+2. **One-Click Action Endpoint (`GET /api/admin/email-action`)**:
+   - Isaac taps either button in Outlook (mobile or desktop).
+   - The endpoint verifies the HMAC token, updates the operator's status in SQLite to `APPROVED` or `REJECTED`, and displays a clean confirmation screen.
+   - The operator's Android app polls `/api/auth/status` and immediately unlocks scan uploads into Isaac's OneDrive upon approval.
+
+3. **Strict Git & Secret Protection**:
+   - Hardened `.gitignore` to comprehensively block SQLite databases (`*.db`, `*.sqlite`, `scanner.db`), scan caches (`scans_backup/`, `*.pdf`), cryptographic keys/keystores (`*.pem`, `*.jks`, `*.keystore`), and secrets (`.env*`, `*secret*`, `*token*`).
