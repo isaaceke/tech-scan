@@ -195,6 +195,15 @@ class ScannedPage(
     var isHighResReady: Boolean = false
 )
 
+data class SaveProgressState(
+    val fileName: String,
+    val stage: String,
+    val inProgress: Boolean,
+    val isSuccess: Boolean = false,
+    val isError: Boolean = false,
+    val errorMessage: String? = null
+)
+
 data class AuditorTask(
     val id: String,
     val aircraft: String,
@@ -1300,8 +1309,9 @@ fun CameraScannerScreen(
         }
     }
 
-    // Background upload & save status
-    var backgroundStatusMessage by remember { mutableStateOf<String?>(null) }
+    // Background upload & save status and shutter debounce
+    var activeSaveState by remember { mutableStateOf<SaveProgressState?>(null) }
+    var lastShutterTapTime by remember { mutableStateOf(0L) }
     var modeFlashText by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(modeFlashText) {
@@ -1517,21 +1527,97 @@ fun CameraScannerScreen(
                     )
                 }
 
-                // Background save indicator banner
-                backgroundStatusMessage?.let { banner ->
-                    Spacer(modifier = Modifier.height(4.dp))
+                // Elevated Background Save & Sync Status Card
+                activeSaveState?.let { state ->
+                    Spacer(modifier = Modifier.height(6.dp))
                     Surface(
-                        color = Color(0xFF27272A),
-                        shape = RoundedCornerShape(6.dp),
+                        color = when {
+                            state.isSuccess -> Color(0xFF064E3B)
+                            state.isError -> Color(0xFF450A0A)
+                            else -> Color(0xFF131B2E)
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(
+                            1.dp,
+                            when {
+                                state.isSuccess -> Color(0xFF10B981)
+                                state.isError -> Color(0xFFEF4444)
+                                else -> Color(0xFF2563EB)
+                            }
+                        ),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(
-                            text = banner,
-                            color = Color.White,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                        )
+                        Column(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = when {
+                                        state.isSuccess -> "SAVE COMPLETED"
+                                        state.isError -> "SAVE FAILED — PAGES RESTORED"
+                                        else -> "BACKGROUND SAVE ACTIVE"
+                                    },
+                                    color = when {
+                                        state.isSuccess -> Color(0xFF34D399)
+                                        state.isError -> Color(0xFFF87171)
+                                        else -> Color(0xFF60A5FA)
+                                    },
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    letterSpacing = 0.5.sp
+                                )
+
+                                Surface(
+                                    color = if (state.inProgress) Color(0xFF064E3B) else Color(0xFF27272A),
+                                    shape = RoundedCornerShape(4.dp)
+                                ) {
+                                    Text(
+                                        text = if (state.inProgress) "CAMERA IS LIVE" else "READY",
+                                        color = if (state.inProgress) Color(0xFFA7F3D0) else Color(0xFF94A3B8),
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            Text(
+                                text = state.fileName,
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+
+                            Text(
+                                text = state.errorMessage ?: state.stage,
+                                color = if (state.isError) Color(0xFFFCA5A5) else Color(0xFFCBD5E1),
+                                fontSize = 11.sp
+                            )
+
+                            if (state.inProgress) {
+                                Spacer(modifier = Modifier.height(6.dp))
+                                LinearProgressIndicator(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(3.dp),
+                                    color = Color(0xFF10B981),
+                                    trackColor = Color(0xFF1E293B)
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Camera is live and ready for next scan — zero waiting needed",
+                                    color = Color(0xFF6EE7B7),
+                                    fontSize = 10.sp,
+                                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -1805,6 +1891,11 @@ fun CameraScannerScreen(
                             .background(Color.Transparent, CircleShape)
                             .border(3.dp, Color.White, CircleShape)
                             .clickable {
+                                // 450ms Shutter Debounce (Prevents accidental double taps in hangar)
+                                val now = android.os.SystemClock.uptimeMillis()
+                                if (now - lastShutterTapTime < 450L) return@clickable
+                                lastShutterTapTime = now
+
                                 val currentSeq = sequenceCounter.getAndIncrement()
                                 val snapInLandscape = isLandscapeMode
 
@@ -1867,6 +1958,7 @@ fun CameraScannerScreen(
                         onClick = {
                             if (capturedPages.isNotEmpty()) {
                                 val pagesToSave = capturedPages.toList()
+                                val lastPagesBackup = pagesToSave.toList()
                                 val fileNameToSave = targetFileName
                                 val acFolder = aircraft.removePrefix("5N-")
 
@@ -1885,7 +1977,12 @@ fun CameraScannerScreen(
 
                                 // 3. NON-BLOCKING POST-PRODUCTION: ROTATION, COMPRESSION & PDF EXPORT
                                 val isCloudActive = MicrosoftOAuthManager.isConnected(prefs)
-                                backgroundStatusMessage = if (isCloudActive) "Uploading to SharePoint..." else "Saving $fileNameToSave..."
+                                activeSaveState = SaveProgressState(
+                                    fileName = fileNameToSave,
+                                    stage = if (isCloudActive) "Optimizing & uploading to OneDrive..." else "Optimizing & saving locally...",
+                                    inProgress = true
+                                )
+
                                 coroutineScope.launch(Dispatchers.IO) {
                                     // Ensure high-res sensor buffers have finished decoding if tapped immediately
                                     var waitMs = 0
@@ -1899,20 +1996,48 @@ fun CameraScannerScreen(
                                         pages = pagesToSave,
                                         aircraftFolder = acFolder,
                                         fileName = fileNameToSave,
-                                        isPatch = isPatchMode
+                                        isPatch = isPatchMode,
+                                        onProgress = { stepDesc ->
+                                            activeSaveState = activeSaveState?.copy(stage = stepDesc)
+                                        }
                                     )
+
                                     withContext(Dispatchers.Main) {
-                                        backgroundStatusMessage = null
-                                        if (savedToCloud) {
-                                            Toast.makeText(context, "Uploaded to SPLIT/$acFolder on SharePoint", Toast.LENGTH_SHORT).show()
-                                        } else if (saved) {
-                                            if (isCloudActive) {
-                                                Toast.makeText(context, "Saved locally. Cloud upload: $cloudMsg", Toast.LENGTH_LONG).show()
+                                        if (saved) {
+                                            view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                                            val successMsg = if (savedToCloud) {
+                                                "Uploaded to SPLIT/$acFolder on OneDrive"
+                                            } else if (isCloudActive) {
+                                                "Saved locally. Cloud: $cloudMsg"
                                             } else {
-                                                Toast.makeText(context, "Saved $fileNameToSave", Toast.LENGTH_SHORT).show()
+                                                "Saved locally to Documents"
+                                            }
+                                            activeSaveState = SaveProgressState(
+                                                fileName = fileNameToSave,
+                                                stage = successMsg,
+                                                inProgress = false,
+                                                isSuccess = true
+                                            )
+                                            // Persistent 4-second success badge before auto-clearing
+                                            delay(4000)
+                                            if (activeSaveState?.isSuccess == true) {
+                                                activeSaveState = null
                                             }
                                         } else {
-                                            Toast.makeText(context, "Failed to save PDF", Toast.LENGTH_SHORT).show()
+                                            // DATA-LOSS GUARD: Restore pages so user can retry!
+                                            capturedPages.clear()
+                                            capturedPages.addAll(lastPagesBackup)
+                                            sequenceCounter.set(capturedPages.size + 1)
+                                            view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+
+                                            activeSaveState = SaveProgressState(
+                                                fileName = fileNameToSave,
+                                                stage = "Save failed",
+                                                inProgress = false,
+                                                isError = true,
+                                                errorMessage = "Failed to save PDF. Pages restored to camera dock."
+                                            )
+                                            Toast.makeText(context, "Save failed. Scanned pages restored to dock for retry.", Toast.LENGTH_LONG).show()
                                         }
                                     }
                                 }
@@ -2160,7 +2285,8 @@ suspend fun compileAndSaveOptimizedPdf(
     pages: List<ScannedPage>,
     aircraftFolder: String,
     fileName: String,
-    isPatch: Boolean
+    isPatch: Boolean,
+    onProgress: ((String) -> Unit)? = null
 ): Triple<Boolean, Boolean, String> = withContext(Dispatchers.IO) {
     val pdfDocument = PdfDocument()
 
@@ -2168,6 +2294,7 @@ suspend fun compileAndSaveOptimizedPdf(
         val sortedPages = pages.sortedBy { it.sequenceNumber }
 
         for ((index, page) in sortedPages.withIndex()) {
+            onProgress?.invoke("Optimizing & rendering page ${index + 1}/${sortedPages.size}...")
             val raw = page.bitmap
 
             // POST-PRODUCTION STEP 1: Downscale to clean document resolution (1600px max)
@@ -2189,14 +2316,9 @@ suspend fun compileAndSaveOptimizedPdf(
                 scaled
             }
 
-            // POST-PRODUCTION STEP 3: Compress to JPEG bytes (78% quality)
-            val stream = ByteArrayOutputStream()
-            finalBitmap.compress(Bitmap.CompressFormat.JPEG, 78, stream)
-            val compressedBytes = stream.toByteArray()
-            val compressedBitmap = BitmapFactory.decodeByteArray(compressedBytes, 0, compressedBytes.size)
-
-            val pageW = compressedBitmap.width
-            val pageH = compressedBitmap.height
+            // POST-PRODUCTION STEP 3: DIRECT CANVAS EMBEDDING (Zero redundant JPEG encode-decode loop)
+            val pageW = finalBitmap.width
+            val pageH = finalBitmap.height
 
             val pageInfo = PdfDocument.PageInfo.Builder(pageW, pageH, index + 1).create()
             val pdfPage = pdfDocument.startPage(pageInfo)
@@ -2204,17 +2326,17 @@ suspend fun compileAndSaveOptimizedPdf(
 
             val destRect = Rect(0, 0, pageW, pageH)
             val paint = Paint().apply { isFilterBitmap = true }
-            canvas.drawBitmap(compressedBitmap, null, destRect, paint)
+            canvas.drawBitmap(finalBitmap, null, destRect, paint)
 
             pdfDocument.finishPage(pdfPage)
 
             // Discard bitmaps immediately
-            compressedBitmap.recycle()
             if (finalBitmap != scaled) finalBitmap.recycle()
             if (scaled != raw) scaled.recycle()
             raw.recycle()
         }
 
+        onProgress?.invoke("Writing PDF file...")
         // Cache PDF file for multi-destination distribution
         val tempPdfFile = File(context.cacheDir, "scan_${System.currentTimeMillis()}_$fileName")
         FileOutputStream(tempPdfFile).use { outputStream ->
@@ -2227,6 +2349,7 @@ suspend fun compileAndSaveOptimizedPdf(
         var savedToCloud = false
         var cloudMessage = ""
         if (MicrosoftOAuthManager.isConnected(prefs)) {
+            onProgress?.invoke("Streaming to Isaac Eke's OneDrive...")
             val (cloudSuccess, msg) = MicrosoftOAuthManager.uploadPdfToBackend(
                 prefs = prefs,
                 pdfFile = tempPdfFile,

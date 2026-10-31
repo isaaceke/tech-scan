@@ -235,3 +235,72 @@ Critical strategic direction from Isaac:
 1. **Zero Admin Mandate**: No ATTAIR tenant administrators can be contacted. Application-only permissions requiring admin consent are replaced with Isaac's user-delegated authorization.
 2. **Purged `isaaceke21@gmail.com`**: Completely deleted from `scanner.db`.
 3. **Desktop App Architecture**: Implementing a standalone Windows desktop app (`Enugu Air Control Center.exe`) for Isaac's laptop with real-time operator approval cards and automatic internet relay.
+
+
+---
+
+## 2026-10-31 12:55:00 +01:00 — Handover Briefing: Android APK UI/UX Hardening & Desktop Control Center Deployment
+
+**Developer Attribution:** DOYCE  
+**Local Timestamp:** 2026-10-31 12:55:00 +01:00  
+
+Hello ChatGPT,
+
+This is the comprehensive engineering handover briefing as Isaac transitions project stewardship to you and Claude. Below is the exact status of the codebase, the newly completed UI/UX overhaul, the data-loss protection architecture, and the standalone desktop Control Center.
+
+---
+
+### 1. Executive Summary & Zero-Admin Directive
+- **Core Directive**: Isaac has explicitly mandated that ATTAIR IT administrators must NEVER be contacted or involved. The automated techlog pipeline reduces his manual workload by approximately 40% and must operate under his sovereign control.
+- **Delegated Ingestion**: All uploads stream into Isaac Eke's personal Microsoft 365 OneDrive AppFolder (`isaac.eke@attair.com.ng`), using delegated permissions and local server credentials that require zero tenant administrator approvals.
+- **Database Hygiene**: `backend/scanner.db` has been completely sanitized. `isaaceke21@gmail.com` was permanently purged; only `isaac.eke@attair.com.ng` (Owner, APPROVED) is registered.
+
+---
+
+### 2. Standalone Windows Desktop App: Enugu Air Control Center
+- **Location**: `control_center/control_center_v2.py`
+- **Compiled Executable**: `C:\Users\HP\Downloads\ENUGU SCANNER\Enugu Air Control Center.exe` (39.0 MB)
+- **Start Menu Shortcut**: `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Enugu Air Control Center.lnk`
+- **Architecture**:
+  - Embedded FastAPI / Uvicorn server running in a dedicated background worker thread on port 8000.
+  - Automatic public cloud relay via Node.js `localtunnel` (`npx localtunnel --port 8000`), allowing mobile devices on cellular networks to connect without being on the same local Wi-Fi.
+  - Real-time database polling of `scanner.db` for `PENDING` operator registrations every 1.5 seconds.
+  - Glowing operator approval card featuring keyboard navigation (`[ APPROVE OPERATOR (Enter) ]` and `[ REJECT (Esc) ]`).
+  - Recent scans audit table tracking all uploads into Isaac's OneDrive with timestamps and aircraft registrations.
+  - Built strictly under the Universal Desktop & GUI protocol (windowless execution, dark Apple-inspired styling, dedicated `.ico` asset, zero emojis).
+
+---
+
+### 3. Android APK UI/UX Overhaul & Performance Fixes (MainActivity.kt)
+Following Claude's detailed 36-point review, the following enhancements have been implemented and verified:
+1. **Unblocked Viewfinder & Active Background Card**:
+   - Replaced the vague single-line grey banner with an elevated Apple-style status Card (`Surface` with 10dp rounded corners).
+   - Features `BACKGROUND SAVE ACTIVE`, explicit `CAMERA IS LIVE` affordance badge, real-time stage updates, and an indeterminate emerald `LinearProgressIndicator`.
+   - Explicitly instructs the operator: *"Camera is live and ready for next scan — zero waiting needed"*.
+   - Viewfinder and shutter button remain completely live and unblocked for immediate consecutive techlog scanning.
+2. **Data-Loss Prevention on Save Failure**:
+   - Preserves an immutable snapshot of scanned pages (`lastPagesBackup`).
+   - If PDF compilation, local write, or cloud streaming fails, the dock is instantly restored (`capturedPages.addAll(lastPagesBackup)`), a warning haptic buzz fires, and the card shows `SAVE FAILED — PAGES RESTORED` with clear retry affordance.
+3. **Elimination of Wasteful Encode/Decode Loop**:
+   - Removed the redundant `finalBitmap.compress(JPEG, 78)` followed by `BitmapFactory.decodeByteArray(...)` cycle.
+   - Now draws `finalBitmap` directly onto `PdfDocument.Page.canvas.drawBitmap(...)`, dramatically slashing CPU usage, memory churn, and PDF compilation latency.
+4. **450ms Shutter Debounce**:
+   - Added an uptime debounce guard (`android.os.SystemClock.uptimeMillis() - lastShutterTapTime < 450L`) to suppress rapid double-taps while wearing gloves in the hangar.
+5. **Activity Recreation Lockdown**:
+   - Configured `AndroidManifest.xml` with `android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"`.
+   - Physical phone rotations or keyboard toggles will never trigger Activity destruction or wipe scanned pages.
+6. **Haptic & Persistent Completion Cue**:
+   - Triggers `HapticFeedbackConstants.CONFIRM` upon successful save.
+   - Displays a persistent 4-second elevated `SAVE COMPLETED` badge before auto-clearing.
+
+---
+
+### 4. Build Verification & Deliverables
+- **Android APK**:
+  - Compiled with `./gradlew.bat assembleDebug`: `BUILD SUCCESSFUL in 1m 31s`.
+  - Active binary replaced at: `C:\Users\HP\Downloads\ENUGU SCANNER\TECHLOG SCAN.apk` (14.1 MB).
+- **Desktop Executable**:
+  - Compiled with PyInstaller: `C:\Users\HP\Downloads\ENUGU SCANNER\Enugu Air Control Center.exe` (39.0 MB).
+- **Git Repository**:
+  - Remote: `https://github.com/isaaceke/tech-scan.git` (`main`).
+  - All sensitive databases, PDFs, and secrets remain securely excluded by `.gitignore`.
