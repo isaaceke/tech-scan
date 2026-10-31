@@ -24,7 +24,7 @@ object MicrosoftOAuthManager {
     // Microsoft multi-tenant public client ID (or configured custom client ID)
     const val DEFAULT_CLIENT_ID = "dc7101d3-3bb7-462f-92e8-374958f4ddb5"
     const val REDIRECT_URI = "techlogscan://auth"
-    const val SCOPES = "User.Read"
+    const val SCOPES = "offline_access User.Read"
 
     const val DEFAULT_BACKEND_URL = "http://10.0.2.2:8000"
     private const val PREFS_KEY_BACKEND_URL = "backend_server_url"
@@ -66,7 +66,8 @@ object MicrosoftOAuthManager {
     }
 
     fun isConnected(prefs: SharedPreferences): Boolean {
-        return !prefs.getString(PREFS_KEY_REFRESH_TOKEN, null).isNullOrBlank()
+        return !prefs.getString(PREFS_KEY_ACCESS_TOKEN, null).isNullOrBlank() ||
+               !prefs.getString(PREFS_KEY_REFRESH_TOKEN, null).isNullOrBlank()
     }
 
     fun getConnectedEmail(prefs: SharedPreferences): String? {
@@ -164,15 +165,17 @@ object MicrosoftOAuthManager {
 
             val json = JSONObject(responseText)
             val accessToken = json.getString("access_token")
-            val refreshToken = json.getString("refresh_token")
+            val refreshToken = json.optString("refresh_token", "")
             val expiresIn = json.optLong("expires_in", 3600L)
             val expiresAt = System.currentTimeMillis() + (expiresIn - 300) * 1000
 
-            prefs.edit()
+            val editor = prefs.edit()
                 .putString(PREFS_KEY_ACCESS_TOKEN, accessToken)
-                .putString(PREFS_KEY_REFRESH_TOKEN, refreshToken)
                 .putLong(PREFS_KEY_EXPIRES_AT, expiresAt)
-                .apply()
+            if (refreshToken.isNotBlank()) {
+                editor.putString(PREFS_KEY_REFRESH_TOKEN, refreshToken)
+            }
+            editor.apply()
 
             // Fetch user identity from Graph /me
             val email = fetchUserEmail(accessToken) ?: "Microsoft Account"
@@ -194,11 +197,15 @@ object MicrosoftOAuthManager {
     // 4. AUTOMATIC BACKGROUND TOKEN REFRESH
     // -------------------------------------------------------------------------
     suspend fun getValidAccessToken(prefs: SharedPreferences): String? = withContext(Dispatchers.IO) {
-        val refreshToken = prefs.getString(PREFS_KEY_REFRESH_TOKEN, null) ?: return@withContext null
-        val expiresAt = prefs.getLong(PREFS_KEY_EXPIRES_AT, 0L)
         val currentAccessToken = prefs.getString(PREFS_KEY_ACCESS_TOKEN, null)
+        val expiresAt = prefs.getLong(PREFS_KEY_EXPIRES_AT, 0L)
 
         if (!currentAccessToken.isNullOrBlank() && System.currentTimeMillis() < expiresAt) {
+            return@withContext currentAccessToken
+        }
+
+        val refreshToken = prefs.getString(PREFS_KEY_REFRESH_TOKEN, null)
+        if (refreshToken.isNullOrBlank()) {
             return@withContext currentAccessToken
         }
 

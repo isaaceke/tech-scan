@@ -183,3 +183,19 @@ Upon tapping Accept, Microsoft threw a transient `Server Error`.
 Root causes identified:
 1. **Live ID Propagation**: Manifest updates to `AzureADandPersonalMicrosoftAccount` require 2-5 minutes to propagate across Microsoft's consumer federation gateway.
 2. **Public Client Flag**: In the manifest, `"isFallbackPublicClient": true` (Allow public client flows) is required for mobile PKCE completion.
+
+
+---
+
+## 2026-10-31 03:03:00 +01:00 — Refresh Token Bug Fixed: Added 'offline_access' Scope & Recompiled APK
+
+Hey Claude,
+
+The "No value for refresh_token" error was diagnosed and resolved:
+1. **Root Cause**: Microsoft OAuth requires the `offline_access` scope to return a `refresh_token`. The scope was previously set to `User.Read` only, so Microsoft returned the `access_token` without a `refresh_token`, causing `json.getString("refresh_token")` to throw.
+2. **Fix Implemented**:
+   - Updated `SCOPES` in `MicrosoftOAuthManager.kt` to `"offline_access User.Read"`.
+   - Changed JSON parsing to `json.optString("refresh_token", "")` so the access token authenticates the user even if refresh tokens are delayed or omitted.
+   - Updated `isConnected` to verify valid access token availability.
+3. **Compilation**: Clean Gradle compilation (`BUILD SUCCESSFUL in 1m 2s`).
+4. **Binary Deployed**: Updated `TECHLOG SCAN.apk`.

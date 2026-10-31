@@ -169,3 +169,15 @@ Major milestone: Isaac successfully verified personal Microsoft account authenti
 To resolve the transient `Server Error` upon tapping Accept:
 - Enable `"isFallbackPublicClient": true` in Entra manifest (or Authentication -> Allow public client flows: Yes).
 - Allow the 2-5 minute Microsoft global propagation window to finish.
+
+
+---
+
+## 2026-10-31 03:03:00 +01:00 — Refresh Token Bug Fixed: Added 'offline_access' Scope & Recompiled APK
+
+Hello ChatGPT,
+
+Update on the "No value for refresh_token" error:
+- Added `offline_access` scope alongside `User.Read`.
+- Made `refresh_token` optional using `json.optString("refresh_token", "")` to protect against missing token fields.
+- Recompiled and updated production binary `TECHLOG SCAN.apk`.
