@@ -434,6 +434,8 @@ fun SettingsDialog(
     onLinkOneDrive: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("techlog_scanner_prefs", Context.MODE_PRIVATE) }
     var newRegInput by remember { mutableStateOf("5N-") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
@@ -503,11 +505,22 @@ fun SettingsDialog(
                                     fontWeight = FontWeight.Bold,
                                     color = Color.White
                                 )
+                                val opStatus = MicrosoftOAuthManager.getOperatorStatus(prefs)
+                                val statusText = when (opStatus) {
+                                    "APPROVED" -> "APPROVED OPERATOR"
+                                    "REJECTED" -> "APPROVAL REJECTED"
+                                    else -> "APPROVAL PENDING"
+                                }
+                                val statusColor = when (opStatus) {
+                                    "APPROVED" -> Color(0xFF10B981)
+                                    "REJECTED" -> Color(0xFFEF4444)
+                                    else -> Color(0xFFF59E0B)
+                                }
                                 Text(
-                                    text = "CONNECTED",
+                                    text = statusText,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF10B981)
+                                    color = statusColor
                                 )
                             }
                             Text(
@@ -623,8 +636,6 @@ fun SettingsDialog(
                 }
 
                 // Azure App (Client) ID Configuration
-                val context = LocalContext.current
-                val prefs = remember { context.getSharedPreferences("techlog_scanner_prefs", Context.MODE_PRIVATE) }
                 var clientIdInput by remember { mutableStateOf(MicrosoftOAuthManager.getClientId(prefs)) }
                 var showClientConfig by remember { mutableStateOf(false) }
 
@@ -684,6 +695,63 @@ fun SettingsDialog(
                         text = "Redirect URI: techlogscan://auth",
                         fontSize = 10.sp,
                         color = Color(0xFFA1A1AA)
+                    )
+                }
+
+                // Backend Server URL Configuration
+                var backendUrlInput by remember { mutableStateOf(MicrosoftOAuthManager.getBackendUrl(prefs)) }
+                var showBackendConfig by remember { mutableStateOf(false) }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "BACKEND SERVER URL",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFA1A1AA)
+                    )
+                    Text(
+                        text = if (showBackendConfig) "DONE" else "EDIT",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        modifier = Modifier.clickable { showBackendConfig = !showBackendConfig }
+                    )
+                }
+
+                if (showBackendConfig) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    OutlinedTextField(
+                        value = backendUrlInput,
+                        onValueChange = {
+                            backendUrlInput = it
+                            MicrosoftOAuthManager.setBackendUrl(prefs, it)
+                        },
+                        singleLine = true,
+                        placeholder = { Text("http://10.0.2.2:8000 or https://...", color = Color(0xFF71717A), fontSize = 12.sp) },
+                        textStyle = LocalTextStyle.current.copy(
+                            fontSize = 12.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Medium,
+                            color = Color.White
+                        ),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = Color(0xFF27272A),
+                            unfocusedContainerColor = Color(0xFF27272A),
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color.White,
+                            unfocusedBorderColor = Color(0xFF3F3F46)
+                        ),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
                     )
                 }
 
@@ -2155,16 +2223,16 @@ suspend fun compileAndSaveOptimizedPdf(
 
         val prefs = context.getSharedPreferences("techlog_scanner_prefs", Context.MODE_PRIVATE)
 
-        // 1. DIRECT MICROSOFT GRAPH API UPLOAD TO SHAREPOINT
+        // 1. UPLOAD TO BACKEND (WHICH STREAMS INTO ISAAC EKE'S ONEDRIVE APPFOLDER)
         var savedToCloud = false
         var cloudMessage = ""
         if (MicrosoftOAuthManager.isConnected(prefs)) {
-            val targetFolder = if (isPatch) "$aircraftFolder/patches" else aircraftFolder
-            val (cloudSuccess, msg) = MicrosoftOAuthManager.uploadPdfToSharePoint(
+            val (cloudSuccess, msg) = MicrosoftOAuthManager.uploadPdfToBackend(
                 prefs = prefs,
                 pdfFile = tempPdfFile,
-                aircraftFolder = targetFolder,
-                fileName = fileName
+                aircraftFolder = aircraftFolder,
+                fileName = fileName,
+                isPatch = isPatch
             )
             savedToCloud = cloudSuccess
             cloudMessage = msg

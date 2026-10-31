@@ -24,7 +24,11 @@ object MicrosoftOAuthManager {
     // Microsoft multi-tenant public client ID (or configured custom client ID)
     const val DEFAULT_CLIENT_ID = "dc7101d3-3bb7-462f-92e8-374958f4ddb5"
     const val REDIRECT_URI = "techlogscan://auth"
-    const val SCOPES = "offline_access Files.ReadWrite User.Read"
+    const val SCOPES = "User.Read"
+
+    const val DEFAULT_BACKEND_URL = "http://10.0.2.2:8000"
+    private const val PREFS_KEY_BACKEND_URL = "backend_server_url"
+    private const val PREFS_KEY_OPERATOR_STATUS = "operator_approval_status"
 
     private const val PREFS_KEY_ACCESS_TOKEN = "ms_access_token"
     private const val PREFS_KEY_REFRESH_TOKEN = "ms_refresh_token"
@@ -32,6 +36,25 @@ object MicrosoftOAuthManager {
     private const val PREFS_KEY_USER_EMAIL = "ms_user_email"
     private const val PREFS_KEY_CODE_VERIFIER = "ms_code_verifier"
     private const val PREFS_KEY_CUSTOM_CLIENT_ID = "ms_custom_client_id"
+
+    fun getBackendUrl(prefs: SharedPreferences): String {
+        val url = prefs.getString(PREFS_KEY_BACKEND_URL, null)
+        return if (!url.isNullOrBlank()) url.trim().trimEnd('/') else DEFAULT_BACKEND_URL
+    }
+
+    fun setBackendUrl(prefs: SharedPreferences, url: String?) {
+        prefs.edit().putString(PREFS_KEY_BACKEND_URL, url?.trim()?.trimEnd('/')).apply()
+    }
+
+    fun getOperatorStatus(prefs: SharedPreferences): String {
+        val email = getConnectedEmail(prefs)
+        if (email.equals("isaac.eke@attair.com.ng", ignoreCase = true)) return "APPROVED"
+        return prefs.getString(PREFS_KEY_OPERATOR_STATUS, "PENDING") ?: "PENDING"
+    }
+
+    fun setOperatorStatus(prefs: SharedPreferences, status: String) {
+        prefs.edit().putString(PREFS_KEY_OPERATOR_STATUS, status).apply()
+    }
 
     fun getClientId(prefs: SharedPreferences): String {
         val custom = prefs.getString(PREFS_KEY_CUSTOM_CLIENT_ID, null)
@@ -57,6 +80,7 @@ object MicrosoftOAuthManager {
             .remove(PREFS_KEY_EXPIRES_AT)
             .remove(PREFS_KEY_USER_EMAIL)
             .remove(PREFS_KEY_CODE_VERIFIER)
+            .remove(PREFS_KEY_OPERATOR_STATUS)
             .apply()
     }
 
@@ -154,7 +178,12 @@ object MicrosoftOAuthManager {
             val email = fetchUserEmail(accessToken) ?: "Microsoft Account"
             prefs.edit().putString(PREFS_KEY_USER_EMAIL, email).apply()
 
-            return@withContext Pair(true, email)
+            // Automatically register operator with backend
+            val backendUrl = getBackendUrl(prefs)
+            val operatorStatus = registerWithBackend(backendUrl, email)
+            setOperatorStatus(prefs, operatorStatus)
+
+            return@withContext Pair(true, "$email ($operatorStatus)")
         } catch (e: Exception) {
             e.printStackTrace()
             return@withContext Pair(false, e.message ?: "Authentication failed")
@@ -227,62 +256,96 @@ object MicrosoftOAuthManager {
     }
 
     // -------------------------------------------------------------------------
-    // 5. DIRECT GRAPH API UPLOAD TO SPLIT/<AIRCRAFT>/<FILENAME>.pdf
+    // 5. BACKEND UPLOAD PIPELINE (STREAMS DIRECTLY TO ISAAC EKE'S ONEDRIVE APPFOLDER)
     // -------------------------------------------------------------------------
-    suspend fun uploadPdfToSharePoint(
+    suspend fun uploadPdfToBackend(
         prefs: SharedPreferences,
         pdfFile: File,
         aircraftFolder: String,
-        fileName: String
+        fileName: String,
+        isPatch: Boolean
     ): Pair<Boolean, String> = withContext(Dispatchers.IO) {
-        val accessToken = getValidAccessToken(prefs)
-            ?: return@withContext Pair(false, "Not connected to Microsoft")
+        val email = getConnectedEmail(prefs) ?: return@withContext Pair(false, "Operator not signed in")
+        val status = getOperatorStatus(prefs)
+        if (status != "APPROVED" && !email.equals("isaac.eke@attair.com.ng", ignoreCase = true)) {
+            return@withContext Pair(false, "Upload blocked: awaiting approval from Isaac Eke")
+        }
 
-        val fileBytes = pdfFile.readBytes()
+        val backendUrl = getBackendUrl(prefs)
+        val uploadUrl = "$backendUrl/api/scans/upload"
 
         try {
-            // First Attempt: Target /me/drive/root:/SPLIT/{aircraft}/{fileName}:/content
-            val encodedDirectPath = Uri.encode("SPLIT/$aircraftFolder/$fileName", "/")
-            val directUrl = "https://graph.microsoft.com/v1.0/me/drive/root:/$encodedDirectPath:/content"
+            val boundary = "==EnuguScanner${System.currentTimeMillis()}=="
+            val conn = URL(uploadUrl).openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+            conn.connectTimeout = 15000
+            conn.readTimeout = 45000
 
-            val (directStatus, directResp) = executeHttpPut(directUrl, accessToken, fileBytes)
-            if (directStatus in 200..299) {
-                return@withContext Pair(true, "Uploaded to SPLIT/$aircraftFolder on SharePoint!")
+            conn.outputStream.use { os ->
+                writeFormField(os, boundary, "operator_email", email)
+                writeFormField(os, boundary, "aircraft", aircraftFolder)
+                writeFormField(os, boundary, "log_number", fileName)
+                writeFormField(os, boundary, "is_patch", if (isPatch) "true" else "false")
+                writeFileField(os, boundary, "file", fileName, pdfFile)
+                os.write("--$boundary--\r\n".toByteArray(Charsets.UTF_8))
             }
 
-            // Second Attempt: If SPLIT is in "Shared With Me" (Isaac Eke shared it with this user)
-            val sharedWithMeUrl = "https://graph.microsoft.com/v1.0/me/drive/sharedWithMe"
-            val (sharedStatus, sharedBody) = executeHttpGet(sharedWithMeUrl, accessToken)
-            if (sharedStatus in 200..299) {
-                val sharedJson = JSONObject(sharedBody)
-                val valueArray = sharedJson.optJSONArray("value")
-                if (valueArray != null) {
-                    for (i in 0 until valueArray.length()) {
-                        val item = valueArray.getJSONObject(i)
-                        val name = item.optString("name")
-                        if (name.equals("SPLIT", ignoreCase = true)) {
-                            val remoteItem = item.optJSONObject("remoteItem")
-                            val remoteDriveId = remoteItem?.optJSONObject("parentReference")?.optString("driveId")
-                            val remoteFolderId = remoteItem?.optString("id")
+            val respCode = conn.responseCode
+            val respBody = (if (respCode in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader()?.readText() ?: ""
 
-                            if (!remoteDriveId.isNullOrBlank() && !remoteFolderId.isNullOrBlank()) {
-                                val encodedSharedPath = Uri.encode("$aircraftFolder/$fileName", "/")
-                                val sharedTargetUrl = "https://graph.microsoft.com/v1.0/drives/$remoteDriveId/items/$remoteFolderId:/$encodedSharedPath:/content"
-                                val (targetStatus, targetResp) = executeHttpPut(sharedTargetUrl, accessToken, fileBytes)
-                                if (targetStatus in 200..299) {
-                                    return@withContext Pair(true, "Uploaded to shared SPLIT/$aircraftFolder on SharePoint!")
-                                }
-                            }
-                        }
-                    }
-                }
+            if (respCode in 200..299) {
+                val json = JSONObject(respBody)
+                val msg = json.optString("message", "Uploaded to Isaac Eke's OneDrive AppFolder")
+                return@withContext Pair(true, msg)
+            } else if (respCode == 403) {
+                return@withContext Pair(false, "Upload blocked: awaiting approval from Isaac Eke")
+            } else {
+                return@withContext Pair(false, "Backend ($respCode): $respBody")
             }
-
-            return@withContext Pair(false, "SharePoint upload error ($directStatus): $directResp")
         } catch (e: Exception) {
             e.printStackTrace()
-            return@withContext Pair(false, e.message ?: "Upload failed")
+            return@withContext Pair(false, "Connection to backend failed (${e.message ?: "network error"})")
         }
+    }
+
+    private fun registerWithBackend(backendUrl: String, email: String): String {
+        try {
+            val conn = URL("$backendUrl/api/auth/register").openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.connectTimeout = 8000
+            conn.readTimeout = 8000
+            val json = JSONObject().apply {
+                put("email", email)
+                put("name", email.substringBefore("@"))
+            }
+            conn.outputStream.use { os ->
+                os.write(json.toString().toByteArray(Charsets.UTF_8))
+            }
+            if (conn.responseCode in 200..299) {
+                val resp = conn.inputStream.bufferedReader().readText()
+                val respJson = JSONObject(resp)
+                return respJson.optString("status", "PENDING")
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return if (email.equals("isaac.eke@attair.com.ng", ignoreCase = true)) "APPROVED" else "PENDING"
+    }
+
+    private fun writeFormField(os: java.io.OutputStream, boundary: String, name: String, value: String) {
+        val header = "--$boundary\r\nContent-Disposition: form-data; name=\"$name\"\r\n\r\n$value\r\n"
+        os.write(header.toByteArray(Charsets.UTF_8))
+    }
+
+    private fun writeFileField(os: java.io.OutputStream, boundary: String, name: String, filename: String, file: File) {
+        val header = "--$boundary\r\nContent-Disposition: form-data; name=\"$name\"; filename=\"$filename\"\r\nContent-Type: application/pdf\r\n\r\n"
+        os.write(header.toByteArray(Charsets.UTF_8))
+        file.inputStream().use { it.copyTo(os) }
+        os.write("\r\n".toByteArray(Charsets.UTF_8))
     }
 
     // -------------------------------------------------------------------------

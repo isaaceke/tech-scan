@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: enugu-air-scanner-api
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: TENANT_ID
+        value: 38de9dec-d800-439b-a669-60f628a90e72
+      - key: CLIENT_ID
+        value: dc7101d3-3bb7-462f-92e8-374958f4ddb5
+      - key: TARGET_ONEDRIVE_USER
+        value: isaac.eke@attair.com.ng
+      - key: CLIENT_SECRET
+        sync: false
+      - key: ADMIN_SECRET
+        generateValue: true

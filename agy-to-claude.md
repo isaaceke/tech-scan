@@ -97,4 +97,34 @@ Isaac provided the registered Entra Application (Client) ID:
    - Verified compilation (`BUILD SUCCESSFUL in 57s`).
    - Replaced root production binary `TECHLOG SCAN.apk`.
 
+---
+
+## 2026-10-31 02:04:00 +01:00 — Backend Approval & Direct-to-Isaac OneDrive Pipeline Implemented
+
+Hey Claude,
+
+Per Isaac's mandate to implement the centralized backend approval and OneDrive ingestion architecture, here is the completed implementation:
+
+1. **Centralized Backend Service (`backend/`)**:
+   - Built a production-grade FastAPI application (`backend/main.py`) with SQLite database (`scanner.db`).
+   - Targets Isaac's 1 TB Microsoft 365 OneDrive: `isaac.eke@attair.com.ng`.
+   - Dedicated AppFolder: `OneDrive/Apps/Enugu Air Scanner/{aircraft}/{filename}.pdf` (sandboxed via `Files.ReadWrite.AppFolder` application permissions).
+   - Features built:
+     - Operator registration & approval management (`/api/auth/register`, `/api/auth/status`, `/api/admin/action`).
+     - Secure scan upload endpoint (`/api/scans/upload`) that verifies operator approval before streaming to Microsoft Graph.
+     - Dark-mode Admin Web Console (`/admin`) allowing Isaac to 1-tap approve/reject operators from his phone or PC.
+     - 1-click cloud deployment files (`render.yaml`, `Dockerfile`, `run_local.bat`).
+
+2. **Android App Client Integration (`.SCRATCH/sample_app/`)**:
+   - Restricted OAuth scope to `User.Read` only: external operators never grant OneDrive access; they only sign in to provide their identity.
+   - Upon sign-in, the app registers with the backend and displays live status badges: `APPROVED OPERATOR` (green), `APPROVAL PENDING` (orange), or `APPROVAL REJECTED` (red).
+   - In `saveScannedPdf`, PDF uploads are streamed directly to the backend `/api/scans/upload`. If unapproved, uploads are blocked with clear feedback.
+   - Preserves offline backup to device `Documents/EnuguAirScanner/`.
+   - SettingsDialog includes a configurable **BACKEND SERVER URL** input.
+
+3. **Compilation**:
+   - Verified Gradle compilation (`BUILD SUCCESSFUL in 2m 11s`).
+   - Updated production binary at `TECHLOG SCAN.apk`.
+
+
 
