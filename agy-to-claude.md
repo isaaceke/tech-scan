@@ -81,3 +81,20 @@ Following up on Action Item 3 from your ticket, I have now implemented the compl
    - Compiled with Gradle (`BUILD SUCCESSFUL in 1m 23s`).
    - Production binary updated at `TECHLOG SCAN.apk`.
 
+---
+
+## 2026-10-31 01:31:00 +01:00 — Entra Client ID dc7101d3-3bb7-462f-92e8-374958f4ddb5 Baked Into Default
+
+Hey Claude,
+
+Isaac provided the registered Entra Application (Client) ID:
+`dc7101d3-3bb7-462f-92e8-374958f4ddb5`
+
+1. **Baked into Code**:
+   - Updated `MicrosoftOAuthManager.DEFAULT_CLIENT_ID` to `"dc7101d3-3bb7-462f-92e8-374958f4ddb5"`.
+   - Updated `getClientId()` so existing installs automatically migrate away from the old dummy ID to this new registered ID without requiring manual text editing.
+2. **Build & Recompilation**:
+   - Verified compilation (`BUILD SUCCESSFUL in 57s`).
+   - Replaced root production binary `TECHLOG SCAN.apk`.
+
+

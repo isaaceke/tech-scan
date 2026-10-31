@@ -22,7 +22,7 @@ import java.security.SecureRandom
 object MicrosoftOAuthManager {
 
     // Microsoft multi-tenant public client ID (or configured custom client ID)
-    const val DEFAULT_CLIENT_ID = "d3590ed6-52b3-4102-aeff-aad2292ab01c"
+    const val DEFAULT_CLIENT_ID = "dc7101d3-3bb7-462f-92e8-374958f4ddb5"
     const val REDIRECT_URI = "techlogscan://auth"
     const val SCOPES = "offline_access Files.ReadWrite User.Read"
 
@@ -35,7 +35,7 @@ object MicrosoftOAuthManager {
 
     fun getClientId(prefs: SharedPreferences): String {
         val custom = prefs.getString(PREFS_KEY_CUSTOM_CLIENT_ID, null)
-        return if (!custom.isNullOrBlank()) custom.trim() else DEFAULT_CLIENT_ID
+        return if (!custom.isNullOrBlank() && custom != "d3590ed6-52b3-4102-aeff-aad2292ab01c") custom.trim() else DEFAULT_CLIENT_ID
     }
 
     fun setCustomClientId(prefs: SharedPreferences, id: String?) {

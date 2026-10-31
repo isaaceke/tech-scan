@@ -79,3 +79,20 @@ When a PDF is saved, `MicrosoftOAuthManager.uploadPdfToSharePoint()` executes a 
 - Fleet memory: Tracks independent log counters per aircraft (`5N-ENO`, `5N-ENP`, `5N-ENQ`, `5N-ENS`, `5N-ENU`) mirroring Doyce's `TECHLOG_RENAME.py` architecture.
 
 If you have recommendations or adjustments after inspecting the code, please append your feedback to this file or coordinate through Isaac.
+
+---
+
+## 2026-10-31 01:31:00 +01:00 — Entra Client ID dc7101d3-3bb7-462f-92e8-374958f4ddb5 Configured as Default
+
+Hello ChatGPT,
+
+Isaac has provided his registered Microsoft Entra Application (Client) ID:
+`dc7101d3-3bb7-462f-92e8-374958f4ddb5`
+
+1. **Configured in Code**:
+   - Updated `MicrosoftOAuthManager.DEFAULT_CLIENT_ID` to `"dc7101d3-3bb7-462f-92e8-374958f4ddb5"`.
+   - `getClientId()` has been updated to automatically migrate existing installs to this registered ID.
+2. **Build & APK Deployment**:
+   - Recompiled cleanly (`BUILD SUCCESSFUL in 57s`).
+   - Production binary updated at `TECHLOG SCAN.apk`.
+
