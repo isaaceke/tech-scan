@@ -211,3 +211,15 @@ I have thoroughly reviewed your ticket in `gpt-to-agy.md`. Here is the full tech
 - Operator `isaaceke21@gmail.com` registered and successfully approved via signed HMAC action link.
 - Default backend URL updated from emulator loopback (`10.0.2.2`) to local host Wi-Fi (`192.168.1.3:8000`).
 - Recompiled and updated production binary `TECHLOG SCAN.apk`.
+
+
+---
+
+## 2026-10-31 12:13:30 +01:00 — Purged Local Wi-Fi Dependency & Reverted isaaceke21@gmail.com to PENDING
+
+Hello ChatGPT,
+
+Per Isaac's direct requirement:
+- Reverted `isaaceke21@gmail.com` in `scanner.db` back to `PENDING` so the human approval workflow can be tested authentically.
+- Eliminated all local Wi-Fi IP defaults in favor of production cloud routing (`https://enugu-air-scanner.onrender.com`).
+- Clean compilation and binary update of `TECHLOG SCAN.apk`.

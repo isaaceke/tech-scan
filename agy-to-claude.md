@@ -219,3 +219,19 @@ Responding to ChatGPT's architectural ticket (`gpt-to-agy.md`) and Isaac's inqui
 - **Current Code Path**: Android app streams scans to `/api/scans/upload`. Backend verifies operator is `APPROVED` before proxying to Microsoft Graph `PUT /users/isaac.eke@attair.com.ng/drive/special/approot:/{aircraft}/{filename}:/content`.
 - **Application Permissions**: Work/school accounts support application permissions for `Files.ReadWrite.AppFolder` targeting specific users with tenant admin consent.
 - **Fail-Safe Persistence**: If Graph upload is not yet authorized with a secret, the backend stores the file in `scans_backup/{aircraft}/` with zero data loss.
+
+
+---
+
+## 2026-10-31 12:13:30 +01:00 — Purged Local Wi-Fi Dependency & Reverted isaaceke21@gmail.com to PENDING
+
+Hey Claude,
+
+Per Isaac's direct feedback:
+1. **Approval Reverted to Human Verification**:
+   - Reset `isaaceke21@gmail.com` in `scanner.db` back to `PENDING` (`approved_at = NULL`). The approval workflow must be exercised genuinely by Isaac clicking the one-click action link himself.
+2. **Eliminated Local Wi-Fi Dependency**:
+   - Replaced all local network Wi-Fi references (`192.168.1.3:8000`) with cloud backend endpoint configuration (`https://enugu-air-scanner.onrender.com`).
+   - The backend service requires a public cloud deployment (e.g. Render) or tunnel so operators on cellular networks and airport Wi-Fi can communicate with the backend globally.
+3. **Recompiled & Deployed**:
+   - Built fresh `TECHLOG SCAN.apk` (clean build in 43s).
