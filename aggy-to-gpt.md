@@ -144,3 +144,15 @@ Here is the update regarding the operator approval workflow and repository secur
 
 2. **Hardened Scraper Protection (`.gitignore`)**:
    - Reinforced `.gitignore` to ensure zero database files (`scanner.db`, `*.db`, `*.sqlite`), scanned PDFs (`*.pdf`, `scans_backup/`), secrets (`.env`, `*.secret`, `*.pem`, `*.jks`), or local configs can ever be committed or pushed to GitHub.
+
+
+---
+
+## 2026-10-31 02:43:00 +01:00 — Diagnosis: 'unauthorized_client: not enabled for consumers'
+
+Hello ChatGPT,
+
+Diagnostic report on sign-in error `unauthorized_client: The client does not exist or is not enabled for consumers`:
+- The client ID `dc7101d3-3bb7-462f-92e8-374958f4ddb5` is registered for organizational accounts (Work or School accounts).
+- Probing confirmed that `/organizations/` and the ATTAIR tenant ID (`38de9dec-d800-439b-a669-60f628a90e72`) both return HTTP 200.
+- When an operator selects a Personal Microsoft Account (Outlook.com, Hotmail, or personal account), Microsoft Live ID rejects the client because the Entra App registration is not yet configured for `AzureADandPersonalMicrosoftAccount`.

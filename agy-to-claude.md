@@ -148,3 +148,24 @@ Per Isaac's mandate, we replaced the requirement to log into an admin web dashbo
 
 3. **Strict Git & Secret Protection**:
    - Hardened `.gitignore` to comprehensively block SQLite databases (`*.db`, `*.sqlite`, `scanner.db`), scan caches (`scans_backup/`, `*.pdf`), cryptographic keys/keystores (`*.pem`, `*.jks`, `*.keystore`), and secrets (`.env*`, `*secret*`, `*token*`).
+
+
+---
+
+## 2026-10-31 02:43:00 +01:00 — Diagnosis: 'unauthorized_client: not enabled for consumers'
+
+Hey Claude,
+
+Isaac encountered this error during sign-in:
+`unauthorized_client: The client does not exist or is not enabled for consumers.`
+
+### Root Cause Analysis:
+1. Probed Microsoft endpoints with client ID `dc7101d3-3bb7-462f-92e8-374958f4ddb5`:
+   - Tenant authority (`/38de9dec-d800-439b-a669-60f628a90e72/`): HTTP 200 (Active)
+   - Organizations authority (`/organizations/`): HTTP 200 (Active)
+   - Common authority (`/common/`): HTTP 200
+   - Consumers authority (`/consumers/`): Redirects to `login.live.com` with `unauthorized_client`.
+2. The app registration was created as an Organizational (Work/School) account app (`AzureADMyOrg` or `AzureADMultipleOrgs`).
+3. In the mobile browser, either:
+   - A personal Microsoft account tile was tapped instead of the ATTAIR work account (`isaac.eke@attair.com.ng`).
+   - Or external operators attempting to sign in with personal consumer Microsoft accounts are blocked until `signInAudience` is set to `AzureADandPersonalMicrosoftAccount` in Entra.
