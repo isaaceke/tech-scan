@@ -26,7 +26,7 @@ object MicrosoftOAuthManager {
     const val REDIRECT_URI = "techlogscan://auth"
     const val SCOPES = "offline_access User.Read"
 
-    const val DEFAULT_BACKEND_URL = "http://10.0.2.2:8000"
+    const val DEFAULT_BACKEND_URL = "http://192.168.1.3:8000"
     private const val PREFS_KEY_BACKEND_URL = "backend_server_url"
     private const val PREFS_KEY_OPERATOR_STATUS = "operator_approval_status"
 
@@ -39,7 +39,7 @@ object MicrosoftOAuthManager {
 
     fun getBackendUrl(prefs: SharedPreferences): String {
         val url = prefs.getString(PREFS_KEY_BACKEND_URL, null)
-        return if (!url.isNullOrBlank()) url.trim().trimEnd('/') else DEFAULT_BACKEND_URL
+        return if (!url.isNullOrBlank() && url != "http://10.0.2.2:8000") url.trim().trimEnd('/') else DEFAULT_BACKEND_URL
     }
 
     fun setBackendUrl(prefs: SharedPreferences, url: String?) {

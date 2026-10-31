@@ -24,7 +24,7 @@ CLIENT_ID = os.getenv("CLIENT_ID", "dc7101d3-3bb7-462f-92e8-374958f4ddb5")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET", "")  # Generated in Azure Entra -> Certificates & Secrets
 TARGET_ONEDRIVE_USER = os.getenv("TARGET_ONEDRIVE_USER", "isaac.eke@attair.com.ng")
 ADMIN_SECRET = os.getenv("ADMIN_SECRET", "enugu2026")
-BASE_URL = os.getenv("BASE_URL", "http://localhost:8000").rstrip("/")
+BASE_URL = os.getenv("BASE_URL", "http://192.168.1.3:8000").rstrip("/")
 
 # Optional SMTP Settings (fallback if Microsoft Graph Mail.Send is not enabled)
 SMTP_HOST = os.getenv("SMTP_HOST", "")

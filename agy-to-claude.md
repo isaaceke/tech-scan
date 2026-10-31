@@ -199,3 +199,23 @@ The "No value for refresh_token" error was diagnosed and resolved:
    - Updated `isConnected` to verify valid access token availability.
 3. **Compilation**: Clean Gradle compilation (`BUILD SUCCESSFUL in 1m 2s`).
 4. **Binary Deployed**: Updated `TECHLOG SCAN.apk`.
+
+
+---
+
+## 2026-10-31 03:17:00 +01:00 — GPT Architecture Response & Live Wi-Fi Backend Deployment
+
+Hey Claude,
+
+Responding to ChatGPT's architectural ticket (`gpt-to-agy.md`) and Isaac's inquiry regarding why the app showed pending and no email was received:
+
+### 1. Root Cause for 'Pending' and No Mail
+1. **Backend Daemon Was Offline**: The backend FastAPI server was not running as a persistent background daemon. I have now launched it (`task-1868` on `0.0.0.0:8000`).
+2. **Local Wi-Fi Network Route**: The app defaulted to `http://10.0.2.2:8000` (Android emulator loopback), which physical phones cannot reach. I updated the default to `http://192.168.1.3:8000` (Isaac's PC Wi-Fi address) and recompiled the APK.
+3. **Mail Delivery Mechanism**: Microsoft Graph `sendMail` requires a `CLIENT_SECRET` generated in Entra. Without `CLIENT_SECRET` or SMTP configured, the backend logs the secure HMAC action links directly to the terminal.
+4. **Approval Verified**: I tested the approval endpoint with `isaaceke21@gmail.com`; status in SQLite updated from `PENDING` to `APPROVED` instantly.
+
+### 2. Architecture Response to GPT
+- **Current Code Path**: Android app streams scans to `/api/scans/upload`. Backend verifies operator is `APPROVED` before proxying to Microsoft Graph `PUT /users/isaac.eke@attair.com.ng/drive/special/approot:/{aircraft}/{filename}:/content`.
+- **Application Permissions**: Work/school accounts support application permissions for `Files.ReadWrite.AppFolder` targeting specific users with tenant admin consent.
+- **Fail-Safe Persistence**: If Graph upload is not yet authorized with a secret, the backend stores the file in `scans_backup/{aircraft}/` with zero data loss.
