@@ -6,6 +6,9 @@ export const MAX_PDF = 32 * 1024 * 1024;
 const GRAPH = 'https://graph.microsoft.com/v1.0';
 const LOGIN = 'https://login.microsoftonline.com';
 const REDIRECT = 'techlogscan://auth';
+const GOOGLE_AUTH = 'https://accounts.google.com/o/oauth2/v2/auth';
+const GOOGLE_TOKEN = 'https://oauth2.googleapis.com/token';
+const GOOGLE_USERINFO = 'https://openidconnect.googleapis.com/v1/userinfo';
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 export class Failure extends Error {
@@ -117,6 +120,36 @@ export class ScannerService {
     catch { throw new Failure(503, 'Microsoft sign-in returned an invalid response.'); }
     return result;
   }
+  async googleOAuth(endpoint, fields) {
+    const response = await this.remote(endpoint, {
+      method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: new URLSearchParams(fields).toString()
+    });
+    let result;
+    try { result = JSON.parse(dec.decode(await bounded(response, 65536))); }
+    catch { throw new Failure(503, 'Google sign-in returned an invalid response.'); }
+    return result;
+  }
+  async googleProfile(token, idToken) {
+    if (idToken && typeof idToken === 'string' && idToken.split('.').length === 3) {
+      try {
+        const raw = idToken.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+        const pad = raw.padEnd(raw.length + (4 - raw.length % 4) % 4, '=');
+        const payload = JSON.parse(dec.decode(unbase64(pad)));
+        if (payload.sub && payload.email) {
+          check(payload.email_verified !== false, 'Google email address is not verified.', 401);
+          return {id: 'google:' + payload.sub, email: email(payload.email), name: payload.name || payload.email};
+        }
+      } catch {}
+    }
+    const response = await this.remote(GOOGLE_USERINFO, {headers: {Accept: 'application/json', Authorization: 'Bearer ' + token}});
+    if (!response.ok) { await response.body?.cancel(); throw new Failure(401, 'Google did not verify the account.'); }
+    let info;
+    try { info = JSON.parse(dec.decode(await bounded(response, 65536))); }
+    catch { throw new Failure(503, 'Google returned an invalid user profile.'); }
+    check(info.sub && info.email, 'Google did not return user account details.', 401);
+    check(info.email_verified !== false, 'Google email address is not verified.', 401);
+    return {id: 'google:' + info.sub, email: email(info.email), name: info.name || info.email};
+  }
   oauthError(result) {
     const code = /AADSTS\d+/.exec(result.error_description || '')?.[0];
     return code ? `Microsoft blocked sign-in (${code}). Your account's sign-in policy must allow this application.` : 'Microsoft sign-in did not complete. Sign in again.';
@@ -131,10 +164,22 @@ export class ScannerService {
   async token(key, realm) {
     let record = await this.open(await this.db.get(key), key);
     if (this.clock() + 90000 >= record.expires_at) {
-      check(record.refresh_token, 'Microsoft sign-in expired. Sign in again.', 401);
-      const result = await this.oauth(realm, 'token', {client_id: this.env.CLIENT_ID,
-        grant_type: 'refresh_token', refresh_token: record.refresh_token});
-      record = this.tokenRecord(result, record); // No new scope requested on refresh.
+      check(record.refresh_token, 'Sign-in expired. Sign in again.', 401);
+      if (realm === 'google') {
+        const result = await this.googleOAuth(GOOGLE_TOKEN, {
+          client_id: this.env.GOOGLE_CLIENT_ID,
+          client_secret: this.env.GOOGLE_CLIENT_SECRET || '',
+          grant_type: 'refresh_token',
+          refresh_token: record.refresh_token
+        });
+        check(result.access_token && result.expires_in, result.error_description || 'Google refresh failed.', 401);
+        record = {access_token: result.access_token, refresh_token: result.refresh_token || record.refresh_token,
+          expires_at: this.clock() + Number(result.expires_in) * 1000, scope: result.scope || record.scope};
+      } else {
+        const result = await this.oauth(realm, 'token', {client_id: this.env.CLIENT_ID,
+          grant_type: 'refresh_token', refresh_token: record.refresh_token});
+        record = this.tokenRecord(result, record); // No new scope requested on refresh.
+      }
       await this.db.put(key, await this.seal(record, key));
     }
     return record.access_token;
@@ -223,7 +268,8 @@ export class ScannerService {
     }
     if (path === '/health' && method === 'GET') return json({service: 'enugu-scanner-relay', version: VERSION,
       storage_connected: !!(await this.db.get('owner-token')) && !await this.db.get('owner-connection-problem'), destination: this.destination(),
-      max_pdf_bytes: this.maxPdf(), hosting: this.env.HOSTING_PROVIDER || 'cloudflare', delivery_mode: 'direct'});
+      max_pdf_bytes: this.maxPdf(), hosting: this.env.HOSTING_PROVIDER || 'cloudflare', delivery_mode: 'direct',
+      google_auth_enabled: !!this.env.GOOGLE_CLIENT_ID});
     await this.key();
     if (path === '/api/auth/start' && method === 'POST') {
       await this.rate(request, 'operator', 30);
@@ -249,6 +295,114 @@ export class ScannerService {
       const tokens = this.tokenRecord(result); const profile = await this.profile(tokens.access_token);
       const signed = await this.session(profile, 'operator', tokens, 'common');
       return json({...signed, ...(await this.operatorStatus({profile}, true))});
+    }
+    if (path === '/api/auth/google/start' && method === 'POST') {
+      check(this.env.GOOGLE_CLIENT_ID, 'Google sign-in is not configured on this scanner service.', 503);
+      await this.rate(request, 'operator', 30);
+      const state = random(), deviceSecret = random(), verifier = random();
+      const body = await this.requestJson(request).catch(() => ({}));
+      const callbackMode = body.callback_mode === 'web';
+      const redirectUri = callbackMode ? (url.origin + '/api/auth/google/callback') : REDIRECT;
+      await this.db.put('google-challenge:' + state, {
+        expires_at: this.clock() + 600000,
+        secret_digest: await sha256(enc.encode(deviceSecret)),
+        redirect_uri: redirectUri,
+        sealed: await this.seal({verifier, redirect_uri: redirectUri}, 'google-challenge:' + state)
+      });
+      const challenge = base64(new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(verifier)))).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
+      const params = new URLSearchParams({
+        client_id: this.env.GOOGLE_CLIENT_ID,
+        response_type: 'code',
+        redirect_uri: redirectUri,
+        scope: 'openid email profile',
+        code_challenge: challenge,
+        code_challenge_method: 'S256',
+        state,
+        prompt: 'select_account'
+      });
+      return json({state, device_secret: deviceSecret, redirect_uri: redirectUri, authorization_url: `${GOOGLE_AUTH}?${params}`});
+    }
+    if (path === '/api/auth/google/finish' && method === 'POST') {
+      check(this.env.GOOGLE_CLIENT_ID, 'Google sign-in is not configured on this scanner service.', 503);
+      const body = await this.requestJson(request);
+      check(typeof body.state === 'string' && /^[A-Za-z0-9_-]{43}$/.test(body.state) && typeof body.device_secret === 'string', 'Invalid sign-in request.');
+      const challenge = await this.db.get('google-challenge:' + body.state);
+      check(challenge && challenge.expires_at > this.clock() && challenge.secret_digest === await sha256(enc.encode(body.device_secret)), 'Sign-in response does not match this phone.', 401);
+      check(typeof body.code === 'string' && body.code.length > 0 && body.code.length < 8192, 'Google did not return a sign-in code.');
+      const {verifier, redirect_uri} = await this.open(challenge.sealed, 'google-challenge:' + body.state);
+      await this.db.delete('google-challenge:' + body.state);
+      const result = await this.googleOAuth(GOOGLE_TOKEN, {
+        client_id: this.env.GOOGLE_CLIENT_ID,
+        client_secret: this.env.GOOGLE_CLIENT_SECRET || '',
+        grant_type: 'authorization_code',
+        code: body.code,
+        redirect_uri: body.redirect_uri || redirect_uri || REDIRECT,
+        code_verifier: verifier
+      });
+      check(result.access_token && result.expires_in, result.error_description || 'Google sign-in did not complete.', 401);
+      const profile = await this.googleProfile(result.access_token, result.id_token);
+      const tokens = {access_token: result.access_token, refresh_token: result.refresh_token || '', expires_in: result.expires_in, scope: result.scope || 'openid email profile'};
+      const signed = await this.session(profile, 'operator', tokens, 'google');
+      const status = await this.operatorStatus({profile}, true);
+      if (status.status !== 'APPROVED') {
+        await this.db.put('pending:' + profile.email, {email: profile.email, name: profile.name, provider: 'google', requested_at: this.clock()});
+      } else {
+        await this.db.delete('pending:' + profile.email);
+      }
+      return json({...signed, ...status});
+    }
+    if (path === '/api/auth/google/callback' && method === 'GET') {
+      const code = url.searchParams.get('code');
+      const state = url.searchParams.get('state');
+      const err = url.searchParams.get('error') || url.searchParams.get('error_description');
+      if (err || !code || !state) {
+        const errMsg = err || 'Google sign-in was declined.';
+        return new Response(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Enugu Air Scanner</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <style>body{background:#0b101b;color:#e6edf7;font-family:sans-serif;padding:32px;text-align:center;}
+          .box{max-width:480px;margin:40px auto;background:#141d2c;padding:32px;border-radius:12px;}
+          h2{color:#f87171;}a{display:inline-block;margin-top:24px;padding:12px 24px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:8px;}</style></head>
+          <body><div class="box"><h2>Sign-In Did Not Complete</h2><p>${errMsg}</p>
+          <a href="techlogscan://auth?error=${encode(errMsg)}">Return to Scanner App</a></div></body></html>`,
+          {status: 400, headers: {'Content-Type': 'text/html; charset=utf-8'}});
+      }
+      const challenge = await this.db.get('google-challenge:' + state);
+      if (!challenge || challenge.expires_at <= this.clock()) {
+        return new Response('<!DOCTYPE html><html><body style="background:#0b101b;color:#e6edf7;font-family:sans-serif;padding:32px;text-align:center;"><h2>Sign-in request expired</h2><p>Please initiate sign-in again from the scanner app.</p></body></html>',
+          {status: 401, headers: {'Content-Type': 'text/html; charset=utf-8'}});
+      }
+      const {verifier, redirect_uri} = await this.open(challenge.sealed, 'google-challenge:' + state);
+      await this.db.delete('google-challenge:' + state);
+      const result = await this.googleOAuth(GOOGLE_TOKEN, {
+        client_id: this.env.GOOGLE_CLIENT_ID,
+        client_secret: this.env.GOOGLE_CLIENT_SECRET || '',
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: redirect_uri || (url.origin + '/api/auth/google/callback'),
+        code_verifier: verifier
+      });
+      check(result.access_token && result.expires_in, result.error_description || 'Google sign-in did not complete.', 401);
+      const profile = await this.googleProfile(result.access_token, result.id_token);
+      const tokens = {access_token: result.access_token, refresh_token: result.refresh_token || '', expires_in: result.expires_in, scope: result.scope || 'openid email profile'};
+      const signed = await this.session(profile, 'operator', tokens, 'google');
+      const status = await this.operatorStatus({profile}, true);
+      const appRedirect = `techlogscan://auth?session_token=${encode(signed.session_token)}&email=${encode(profile.email)}&account_id=${encode(profile.id)}&status=${encode(status.status)}&expires_at=${signed.expires_at}`;
+      if (status.status !== 'APPROVED') {
+        await this.db.put('pending:' + profile.email, {email: profile.email, name: profile.name, provider: 'google', requested_at: this.clock()});
+      } else {
+        await this.db.delete('pending:' + profile.email);
+      }
+      return new Response(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Enugu Air Scanner</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta http-equiv="refresh" content="0;url=${appRedirect}">
+        <style>body{background:#0b101b;color:#e6edf7;font-family:sans-serif;padding:32px;text-align:center;}
+        .box{max-width:480px;margin:40px auto;background:#141d2c;padding:32px;border-radius:12px;}
+        h2{color:#34d399;}a{display:inline-block;margin-top:24px;padding:12px 24px;background:#10b981;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;}</style>
+        <script>window.location.href = ${JSON.stringify(appRedirect)};</script></head>
+        <body><div class="box"><h2>${status.status === 'APPROVED' ? 'Sign-In Approved' : 'Sign-In Pending Approval'}</h2>
+        <p>${status.status === 'APPROVED' ? 'Returning to Enugu Air Techlog Scanner...' : 'Your Google account ' + profile.email + ' is awaiting approval in the Control Center.'}</p>
+        <a href="${appRedirect}">Open Techlog Scanner</a></div></body></html>`,
+        {status: 200, headers: {'Content-Type': 'text/html; charset=utf-8'}});
     }
     if (path === '/api/auth/status' && method === 'GET') {
       return json(await this.operatorStatus(await this.authenticate(request)));
@@ -298,6 +452,7 @@ export class ScannerService {
       const session = await this.authenticate(request, 'owner');
       return json({owner: session.profile, destination: this.destination(), storage_connected: !!(await this.db.get('owner-token')) && !await this.db.get('owner-connection-problem'),
         approved_emails: [...(await this.db.list({prefix: 'approved:'})).values()],
+        pending_requests: [...(await this.db.list({prefix: 'pending:'})).values()],
         receipts: [...(await this.db.list({prefix: 'receipt:', limit: 30, reverse: true})).values()],
         audit: [...(await this.db.list({prefix: 'audit:', limit: 50, reverse: true})).values()]});
     }
@@ -308,6 +463,7 @@ export class ScannerService {
       const old = await this.db.get(key);
       if (!old) await this.commit([[key, {email: approvedEmail, identity_id: null, approved_at: this.clock(), approved_by: session.profile.id}]],
         'EMAIL_APPROVED', session.profile, {email: approvedEmail});
+      await this.db.delete('pending:' + approvedEmail);
       return json({approved: true, email: approvedEmail}); // Invoked only by the human panel button.
     }
     if (path === '/api/owner/emails/remove' && method === 'POST') {
@@ -368,9 +524,11 @@ export class ScannerService {
   async upload(request, url) {
     const session = await this.authenticate(request);
     const tokenKey = session.role === 'owner' ? 'owner-token' : 'identity-token:' + session.profile.id;
-    const verified = await this.profile(await this.token(tokenKey, session.realm));
-    check(verified.id === session.profile.id && verified.email === session.profile.email, 'The signed-in Microsoft account changed.', 401);
-    check(await this.approved(verified, true), 'This Microsoft email is not approved in the owner panel.', 403);
+    const verified = session.realm === 'google'
+      ? await this.googleProfile(await this.token(tokenKey, 'google'))
+      : await this.profile(await this.token(tokenKey, session.realm));
+    check(verified.id === session.profile.id && verified.email === session.profile.email, 'The signed-in account changed.', 401);
+    check(await this.approved(verified, true), 'This email is not approved in the owner panel.', 403);
     const id = url.pathname.slice('/api/scans/'.length);
     check(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id), 'Invalid scan identifier.');
     const name = url.searchParams.get('name'), aircraft = url.searchParams.get('aircraft'), patch = url.searchParams.get('patch');

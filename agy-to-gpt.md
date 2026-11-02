@@ -359,3 +359,48 @@ Here is the complete briefing on the final implemented architecture, resolving t
   - Cloudflare Worker Relay: **23/23** passing tests in `online_service/test/`.
   - Android Unit Tests: **51/51** passing tests in `:app:testDebugUnitTest`.
   - Total automated regression tests: **150/150** passing.
+
+---
+
+## 2026-11-02 10:55:00 +01:00 — Google OAuth Operator Sign-In & Desktop Access Panel v3
+
+Hello ChatGPT,
+
+Here is the update on the completion of the Google OAuth sign-in integration and the upgraded Desktop Access Panel v3.
+
+### 1. Dual-Identity Operator Authentication (Microsoft + Google)
+- **Problem**: Operators needed the ability to authenticate with personal or company Google accounts in addition to Microsoft 365, while maintaining strict operator verification before scan delivery.
+- **Relay Implementation (`online_service/src/service.mjs`)**:
+  - `POST /api/auth/google/start`: Generates cryptographic PKCE challenge, state, and device secret; constructs Google OAuth 2.0 authorization URL targeting `https://accounts.google.com/o/oauth2/v2/auth`.
+  - `GET /api/auth/google/callback`: Web redirect landing handler that completes server-to-server authorization code redemption against Google token endpoint, fetches verified email/name from `https://openidconnect.googleapis.com/v1/userinfo`, records unapproved sign-ins in Durable Object storage as `pending:[email]`, and redirects the mobile browser to `techlogscan://auth?session_token=...&email=...&account_id=...&status=...`.
+  - `POST /api/auth/google/finish`: Alternative direct app code redemption endpoint for native custom URI scheme returns.
+  - `token(key, realm)`: Fully supports Google refresh token exchange when operator session realm is `google`.
+  - `upload(request, url)`: Verifies operator identity against Google profile when session realm is `google`, while continuing to stream PDF delivery into Isaac's pre-authorized ATTAIR OneDrive connector folder.
+- **Relay Test Suite**: 26/26 tests passing in `online_service/test/`.
+
+### 2. Android Mobile App Integration
+- **[OnlineScannerIdentity.kt](file:///c:/Users/HP/Downloads/ENUGU%20SCANNER/.SCRATCH/sample_app/app/src/main/kotlin/com/example/enuguairscannertest/OnlineScannerIdentity.kt)**:
+  - Added `startGoogleSignIn(context, prefs)` initiating Google OAuth with Web callback mode.
+  - Updated `finish(intent, prefs)` to handle direct `session_token` callback from Web OAuth redirect as well as direct code redemption via `/api/auth/google/finish`.
+- **[MicrosoftOAuthManager.kt](file:///c:/Users/HP/Downloads/ENUGU%20SCANNER/.SCRATCH/sample_app/app/src/main/kotlin/com/example/enuguairscannertest/MicrosoftOAuthManager.kt)**:
+  - Exposed `startGoogleSignIn(context, prefs)`.
+- **[MainActivity.kt](file:///c:/Users/HP/Downloads/ENUGU%20SCANNER/.SCRATCH/sample_app/app/src/main/kotlin/com/example/enuguairscannertest/MainActivity.kt)**:
+  - `SettingsDialog` now displays both "SIGN IN WITH MICROSOFT" and "SIGN IN WITH GOOGLE" action buttons styled cleanly with zero emojis.
+- **Production APK**: Compiled and verified cleanly with automated build guards:
+  - Output binary: [TECHLOG SCAN.apk](file:///c:/Users/HP/Downloads/ENUGU%20SCANNER/TECHLOG%20SCAN.apk) (14.1 MB).
+  - All Android unit tests passing: 52/52 tests.
+
+### 3. Desktop Access Panel v3 ([control_center/online_control_center_v3.py](file:///c:/Users/HP/Downloads/ENUGU%20SCANNER/control_center/online_control_center_v3.py))
+- **Live Pending Requests Table**: Displays incoming sign-ins from operators waiting for owner approval, including email, identity provider (Google or Microsoft), and timestamp.
+- **1-Click Approval**: Added "APPROVE SELECTED REQUEST" button so Isaac can approve an operator immediately when they notify him on the phone.
+- **Automated Cleanup**: Approving an email automatically clears it from the pending table and moves it to the approved table on the relay.
+- **Standalone Binary**: Recompiled windowless executable [Enugu Air Online Access Panel.exe](file:///c:/Users/HP/Downloads/ENUGU%20SCANNER/Enugu%20Air%20Online%20Access%20Panel.exe) (13.1 MB) with PyInstaller and embedded vector icon.
+- **Start Menu Shortcut**: Updated `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Enugu Air Online Access Panel.lnk`.
+- **Launcher Batch**: Updated [Open Online Access Panel.cmd](file:///c:/Users/HP/Downloads/ENUGU%20SCANNER/Open%20Online%20Access%20Panel.cmd).
+- **Unit Tests**: 77/77 Python unit tests passing in `tests/`.
+
+### 4. Overall Verification Metrics
+- Cloudflare Relay: **26/26** tests passing.
+- Android Client: **52/52** tests passing.
+- Python Suite: **77/77** tests passing.
+- Total regression tests: **155/155** passing.

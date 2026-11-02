@@ -19,6 +19,7 @@ object OnlineScannerIdentity {
     private const val ACCOUNT = "relay_account_id"
     private const val STATE = "relay_auth_state"
     private const val SECRET = "relay_auth_device_secret"
+    private const val PROVIDER = "relay_auth_provider"
     private var config = JSONObject()
     private var destination = JSONObject()
     private val generation = AtomicLong()
@@ -40,9 +41,9 @@ object OnlineScannerIdentity {
     fun email(prefs: SharedPreferences): String? = prefs.getString(EMAIL, null)
     fun account(prefs: SharedPreferences): String? = prefs.getString(ACCOUNT, null)
     fun bearer(prefs: SharedPreferences): String? = if (System.currentTimeMillis() < prefs.getLong(EXPIRES, 0)) prefs.getString(SESSION, null) else null
-    fun cancel(prefs: SharedPreferences) { generation.incrementAndGet(); prefs.edit().remove(STATE).remove(SECRET).apply() }
+    fun cancel(prefs: SharedPreferences) { generation.incrementAndGet(); prefs.edit().remove(STATE).remove(SECRET).remove(PROVIDER).apply() }
     fun disconnect(prefs: SharedPreferences) {
-        prefs.edit().remove(SESSION).remove(EXPIRES).remove(EMAIL).remove(ACCOUNT).remove(STATE).remove(SECRET).apply()
+        prefs.edit().remove(SESSION).remove(EXPIRES).remove(EMAIL).remove(ACCOUNT).remove(STATE).remove(SECRET).remove(PROVIDER).apply()
     }
     suspend fun startSignIn(context: Context, prefs: SharedPreferences) {
         val requestGeneration = generation.incrementAndGet()
@@ -56,33 +57,88 @@ object OnlineScannerIdentity {
             uri.getQueryParameter("redirect_uri") == MicrosoftOAuthManager.REDIRECT_URI &&
             uri.getQueryParameter("scope")?.split(' ')?.toSet() == setOf("User.Read", "offline_access") &&
             state.matches(Regex("[A-Za-z0-9_-]{43}")) && secret.matches(Regex("[A-Za-z0-9_-]{43}"))) { "The online service returned an unexpected sign-in request." }
-        require(prefs.edit().putString(STATE, state).putString(SECRET, secret).commit()) { "Cannot save the sign-in request on this phone." }
+        require(prefs.edit().putString(STATE, state).putString(SECRET, secret).putString(PROVIDER, "microsoft").commit()) { "Cannot save the sign-in request on this phone." }
+        withContext(Dispatchers.Main) {
+            if (generation.get() == requestGeneration) CustomTabsIntent.Builder().setShowTitle(true).build().launchUrl(context, uri)
+        }
+    }
+    suspend fun startGoogleSignIn(context: Context, prefs: SharedPreferences) {
+        val requestGeneration = generation.incrementAndGet()
+        val result = withContext(Dispatchers.IO) {
+            OnlineServiceClient(serverUrl()).request("/api/auth/google/start", JSONObject().put("callback_mode", "web"))
+        }
+        if (generation.get() != requestGeneration) return
+        val state = result.getString("state")
+        val secret = result.getString("device_secret")
+        val uri = Uri.parse(result.getString("authorization_url"))
+        require(uri.scheme == "https" && uri.host == "accounts.google.com" && uri.path == "/o/oauth2/v2/auth" &&
+            uri.getQueryParameter("state") == state &&
+            state.matches(Regex("[A-Za-z0-9_-]{43}")) && secret.matches(Regex("[A-Za-z0-9_-]{43}"))) {
+            "The online service returned an unexpected Google sign-in request."
+        }
+        require(prefs.edit().putString(STATE, state).putString(SECRET, secret).putString(PROVIDER, "google").commit()) {
+            "Cannot save the sign-in request on this phone."
+        }
         withContext(Dispatchers.Main) {
             if (generation.get() == requestGeneration) CustomTabsIntent.Builder().setShowTitle(true).build().launchUrl(context, uri)
         }
     }
     suspend fun finish(intent: Intent, prefs: SharedPreferences): Pair<Boolean, String> = withContext(Dispatchers.IO) {
         try {
-            val uri = intent.data ?: return@withContext false to "No Microsoft sign-in response."
+            val uri = intent.data ?: return@withContext false to "No sign-in response."
             val state = prefs.getString(STATE, null)
             val secret = prefs.getString(SECRET, null)
-            require(uri.scheme == "techlogscan" && uri.host == "auth" && !state.isNullOrBlank() && !secret.isNullOrBlank() &&
-                uri.getQueryParameter("state") == state) { "Sign-in response did not match this phone." }
+            val provider = prefs.getString(PROVIDER, "microsoft")
+            require(uri.scheme == "techlogscan" && uri.host == "auth") { "Sign-in response did not match this app." }
+
+            if (uri.getQueryParameter("error") != null) {
+                cancel(prefs)
+                return@withContext false to FolderAccessPolicy.signInError(
+                    uri.getQueryParameter("error_description") ?: uri.getQueryParameter("error") ?: "Sign-in was declined."
+                )
+            }
+
+            val sessionToken = uri.getQueryParameter("session_token")
+            if (!sessionToken.isNullOrBlank()) {
+                val email = uri.getQueryParameter("email") ?: ""
+                val accountId = uri.getQueryParameter("account_id") ?: email
+                val expiresAt = uri.getQueryParameter("expires_at")?.toLongOrNull() ?: (System.currentTimeMillis() + 30L * 86400000L)
+                cancel(prefs)
+                require(email.contains('@') && sessionToken.matches(Regex("[A-Za-z0-9_-]{43}")) && expiresAt > System.currentTimeMillis()) {
+                    "The online service did not confirm sign-in."
+                }
+                disconnect(prefs)
+                require(prefs.edit().putString(SESSION, sessionToken).putLong(EXPIRES, expiresAt)
+                    .putString(EMAIL, email).putString(ACCOUNT, accountId).commit()) {
+                    "Cannot retain the scanner sign-in on this phone."
+                }
+                return@withContext true to email
+            }
+
+            require(!state.isNullOrBlank() && !secret.isNullOrBlank() && uri.getQueryParameter("state") == state) {
+                "Sign-in response did not match this phone."
+            }
             cancel(prefs)
-            if (uri.getQueryParameter("error") != null) return@withContext false to FolderAccessPolicy.signInError(
-                uri.getQueryParameter("error_description") ?: "Microsoft sign-in was declined.")
-            val code = uri.getQueryParameter("code") ?: return@withContext false to "Microsoft did not return a sign-in code."
-            val result = OnlineServiceClient(serverUrl()).request("/api/auth/finish", JSONObject().put("state", state).put("device_secret", secret).put("code", code))
+            val code = uri.getQueryParameter("code") ?: return@withContext false to "Authentication service did not return a sign-in code."
+            val endpoint = if (provider == "google") "/api/auth/google/finish" else "/api/auth/finish"
+            val result = OnlineServiceClient(serverUrl()).request(
+                endpoint,
+                JSONObject().put("state", state).put("device_secret", secret).put("code", code)
+            )
             checkDestination(result.getJSONObject("destination"))
             val profile = result.getJSONObject("profile")
             val token = result.getString("session_token")
             require(profile.getString("id").isNotBlank() && profile.getString("email").contains('@') &&
-                token.matches(Regex("[A-Za-z0-9_-]{43}")) && result.getLong("expires_at") > System.currentTimeMillis()) { "The online service did not confirm sign-in." }
+                token.matches(Regex("[A-Za-z0-9_-]{43}")) && result.getLong("expires_at") > System.currentTimeMillis()) {
+                "The online service did not confirm sign-in."
+            }
             disconnect(prefs)
             require(prefs.edit().putString(SESSION, token).putLong(EXPIRES, result.getLong("expires_at"))
-                .putString(EMAIL, profile.getString("email")).putString(ACCOUNT, profile.getString("id")).commit()) { "Cannot retain the scanner sign-in on this phone." }
+                .putString(EMAIL, profile.getString("email")).putString(ACCOUNT, profile.getString("id")).commit()) {
+                "Cannot retain the scanner sign-in on this phone."
+            }
             true to profile.getString("email")
-        } catch (error: Exception) { false to (error.message ?: "Microsoft sign-in did not complete.") }
+        } catch (error: Exception) { false to (error.message ?: "Sign-in did not complete.") }
     }
     private fun checkDestination(observed: JSONObject) {
         require(listOf("drive_id", "folder_id", "owner_id").all { observed.optString(it).isNotBlank() && observed.optString(it) == destination.optString(it) }) {
@@ -90,13 +146,13 @@ object OnlineScannerIdentity {
         }
     }
     suspend fun status(prefs: SharedPreferences): MicrosoftOAuthManager.OperatorSyncResult = withContext(Dispatchers.IO) {
-        if (!connected(prefs)) return@withContext MicrosoftOAuthManager.OperatorSyncResult("NOT_SIGNED_IN", "Sign in with the Microsoft email approved in the owner panel.")
+        if (!connected(prefs)) return@withContext MicrosoftOAuthManager.OperatorSyncResult("NOT_SIGNED_IN", "Sign in with the Microsoft or Google email approved in the owner panel.")
         val token = bearer(prefs) ?: return@withContext MicrosoftOAuthManager.OperatorSyncResult("SIGN_IN_REQUIRED", "Sign in again to reconnect your scanner account.")
         try {
             val result = OnlineServiceClient(serverUrl(), token).request("/api/auth/status")
             checkDestination(result.getJSONObject("destination"))
             val profile = result.getJSONObject("profile")
-            require(profile.optString("id") == account(prefs) && profile.optString("email") == email(prefs)) { "The service returned a different Microsoft account." }
+            require(profile.optString("id") == account(prefs) && profile.optString("email") == email(prefs)) { "The service returned a different operator account." }
             val status = result.getString("status")
             require(status in listOf("APPROVED", "DENIED", "NOT_CONFIGURED")) { "Invalid scanner access status." }
             MicrosoftOAuthManager.OperatorSyncResult(status, result.optString("message"))

@@ -54,6 +54,13 @@ export class MicrosoftFixture {
       }
       return reply(this.ownerResult());
     }
+    if(url.hostname==='oauth2.googleapis.com') {
+      const payload=btoa(JSON.stringify({sub:'google-sub-123',email:'googlestaff@example.invalid',email_verified:true,name:'Google Staff'})).replaceAll('=','');
+      return reply({access_token:'synthetic-google-access',refresh_token:'synthetic-google-refresh',expires_in:3600,token_type:'Bearer',id_token:'header.'+payload+'.signature'});
+    }
+    if(url.hostname==='openidconnect.googleapis.com') {
+      return reply({sub:'google-sub-123',email:'googlestaff@example.invalid',email_verified:true,name:'Google Staff'});
+    }
     assert.equal(url.hostname,'graph.microsoft.com');
     if(path==='/v1.0/me') return this.profiles.has(token)?reply(this.profiles.get(token)):reply({error:'expired'},401);
     assert.equal(token,'synthetic-owner-access','Corporate drive calls require only the owner token');
@@ -102,5 +109,5 @@ export async function fixture() {
     return call('/api/scans/'+jobId+'?'+query,undefined,token,{method:'PUT',body:bytes,headers:{'Content-Type':'application/pdf',
       'Content-Length':String(bytes.length),'X-Scan-SHA256':await sha256(bytes)}});
   }
-  return {db,ms,call,staff,upload,owner,advance:ms=>{now+=ms;},restart:()=>{service=new ScannerService(db,env,ms.fetch,()=>now);}};
+  return {db,ms,call,staff,upload,owner,get service(){return service;},advance:ms=>{now+=ms;},restart:()=>{service=new ScannerService(db,env,ms.fetch,()=>now);}};
 }

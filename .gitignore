@@ -122,6 +122,9 @@ logs/
 # =============================================================================
 .SCRATCH/backups/
 .SCRATCH/reference_screens/
+.SCRATCH/build_pyinstaller/
+.SCRATCH/spec_pyinstaller/
+*.spec
 .SCRATCH/*.py
 .SCRATCH/*.html
 .SCRATCH/*.svg

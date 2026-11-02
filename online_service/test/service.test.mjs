@@ -157,3 +157,53 @@ test('Firebase Hosting owner cookie works and logout removes it without disconne
   assert.equal((await f.call('/api/owner/overview',undefined,f.owner)).status,401);
   assert.equal((await f.call('/health')).value.storage_connected,true);
 });
+
+test('Google sign-in reports unconfigured when GOOGLE_CLIENT_ID is absent',async()=>{
+  const f=await fixture();
+  assert.equal((await f.call('/health')).value.google_auth_enabled,false);
+  const start=await f.call('/api/auth/google/start',{});
+  assert.equal(start.status,503);assert.match(start.value.error,/Google sign-in is not configured/);
+});
+test('Google sign-in starts, redeems tokens, links account, and verifies approval state',async()=>{
+  const f=await fixture();
+  try {
+    f.service.env.GOOGLE_CLIENT_ID='synthetic-google-client-id';
+    assert.equal((await f.call('/health')).value.google_auth_enabled,true);
+    const start=await f.call('/api/auth/google/start',{});
+    assert.equal(start.status,200);
+    assert.ok(start.value.authorization_url.startsWith('https://accounts.google.com/o/oauth2/v2/auth'));
+    assert.ok(start.value.state);assert.ok(start.value.device_secret);
+    const unapproved=await f.call('/api/auth/google/finish',{state:start.value.state,device_secret:start.value.device_secret,code:'mock-google-code'});
+    assert.equal(unapproved.status,200);assert.equal(unapproved.value.status,'DENIED');
+    assert.equal(unapproved.value.profile.email,'googlestaff@example.invalid');
+    const overview=await f.call('/api/owner/overview',undefined,f.owner);
+    assert.equal(overview.value.pending_requests.length,1);
+    assert.equal(overview.value.pending_requests[0].email,'googlestaff@example.invalid');
+    const approve=await f.call('/api/owner/emails',{email:'googlestaff@example.invalid'},f.owner);
+    assert.equal(approve.status,200);
+    const overview2=await f.call('/api/owner/overview',undefined,f.owner);
+    assert.equal(overview2.value.pending_requests.length,0);
+    const start2=await f.call('/api/auth/google/start',{});
+    const approved=await f.call('/api/auth/google/finish',{state:start2.value.state,device_secret:start2.value.device_secret,code:'mock-google-code-2'});
+    assert.equal(approved.status,200);assert.equal(approved.value.status,'APPROVED');
+    const upload=await f.upload(approved.value.session_token);
+    assert.equal(upload.status,200);assert.equal(upload.value.account_id,'google:google-sub-123');
+  } finally {
+    delete f.service.env.GOOGLE_CLIENT_ID;
+  }
+});
+test('Google sign-in web callback redirects to app scheme and stores pending request if unapproved',async()=>{
+  const f=await fixture();
+  try {
+    f.service.env.GOOGLE_CLIENT_ID='synthetic-google-client-id';
+    const start=await f.call('/api/auth/google/start',{callback_mode:'web'});
+    assert.ok(decodeURIComponent(start.value.authorization_url).includes('/api/auth/google/callback'));
+    const cbRes=await f.service.fetch(new Request(`https://scanner.example.invalid/api/auth/google/callback?code=mock-code&state=${start.value.state}`));
+    assert.equal(cbRes.status,200);
+    const text=await cbRes.text();
+    assert.ok(text.includes('techlogscan://auth'));
+    assert.ok(text.includes('googlestaff@example.invalid'));
+  } finally {
+    delete f.service.env.GOOGLE_CLIENT_ID;
+  }
+});

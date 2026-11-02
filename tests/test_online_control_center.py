@@ -13,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "control_center"))
 
-from online_control_center_v2 import OnlineControlCenter
+from online_control_center_v3 import OnlineControlCenter
 
 
 class FakeHttpResponse:
@@ -36,6 +36,7 @@ class FakeOnlineBackend:
     def __init__(self):
         self.owner_email = "isaac.eke@attair.com.ng"
         self.approved = [{"email": "tech1@example.com", "identity_id": "id-1"}]
+        self.pending = [{"email": "pending_google@example.com", "name": "Google Operator", "provider": "google", "requested_at": 1700000000000}]
         self.storage_connected = True
         self.challenges = {}
         self.signed_in = False
@@ -73,12 +74,14 @@ class FakeOnlineBackend:
             return FakeHttpResponse({
                 "owner": {"email": self.owner_email, "id": "owner-guid"},
                 "storage_connected": self.storage_connected,
-                "approved_emails": self.approved
+                "approved_emails": self.approved,
+                "pending_requests": self.pending
             })
 
         if url.endswith("/api/owner/emails"):
             new_email = body.get("email")
             self.approved.append({"email": new_email, "identity_id": None})
+            self.pending = [p for p in self.pending if p.get("email") != new_email]
             return FakeHttpResponse({"approved": True, "email": new_email})
 
         if url.endswith("/api/owner/emails/remove"):
@@ -121,6 +124,7 @@ class OnlineControlCenterTests(unittest.TestCase):
         self.assertEqual("disabled", str(self.gui.approve["state"]))
         self.assertEqual("disabled", str(self.gui.refresh_button["state"]))
         self.assertEqual("disabled", str(self.gui.build_button["state"]))
+        self.assertEqual("disabled", str(self.gui.approve_pending_button["state"]))
         self.assertEqual("disabled", str(self.gui.remove["state"]))
 
     def test_owner_signin_flow_opens_browser_and_connects(self):
@@ -133,7 +137,7 @@ class OnlineControlCenterTests(unittest.TestCase):
         self.assertEqual("normal", str(self.gui.refresh_button["state"]))
         self.assertEqual("normal", str(self.gui.build_button["state"]))
 
-    def test_overview_populates_treeview_rows(self):
+    def test_overview_populates_treeview_rows_and_pending_requests(self):
         self.gui.session = "mock-owner-session-token-43charslong012345678"
         self.gui.refresh()
         self.pump()
@@ -142,6 +146,27 @@ class OnlineControlCenterTests(unittest.TestCase):
         row_vals = self.gui.table.item(children[0], "values")
         self.assertEqual("tech1@example.com", row_vals[0])
         self.assertEqual("Account linked", row_vals[1])
+
+        pending_children = self.gui.pending_table.get_children()
+        self.assertEqual(1, len(pending_children))
+        pending_vals = self.gui.pending_table.item(pending_children[0], "values")
+        self.assertEqual("pending_google@example.com", pending_vals[0])
+        self.assertEqual("Google", pending_vals[1])
+
+    def test_approve_pending_request_moves_to_approved_table(self):
+        self.gui.session = "mock-owner-session-token-43charslong012345678"
+        self.gui.refresh()
+        self.pump()
+        pending_children = self.gui.pending_table.get_children()
+        self.gui.pending_table.selection_set(pending_children[0])
+        self.gui.buttons()
+        self.assertEqual("normal", str(self.gui.approve_pending_button["state"]))
+
+        self.gui.approve_pending()
+        self.pump()
+        self.assertEqual(0, len(self.backend.pending))
+        approved_emails = [a["email"] for a in self.backend.approved]
+        self.assertIn("pending_google@example.com", approved_emails)
 
     def test_approve_email_adds_record_and_refreshes(self):
         self.gui.session = "mock-owner-session-token-43charslong012345678"

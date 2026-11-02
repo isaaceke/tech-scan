@@ -38,6 +38,25 @@ class OnlineServiceClientTest {
             exchange.sendResponseHeaders(if (unavailable) 503 else 200, bytes.size.toLong())
             exchange.responseBody.use { it.write(bytes) }; exchange.close()
         }
+        server.createContext("/api/auth/google/start") { exchange ->
+            val bytes = JSONObject().put("state", "test-state-43-chars-long-placeholder-string-01")
+                .put("device_secret", "test-secret-43-chars-long-placeholder-string-02")
+                .put("authorization_url", "https://accounts.google.com/o/oauth2/v2/auth?state=test-state-43-chars-long-placeholder-string-01")
+                .toString().toByteArray()
+            exchange.responseHeaders.add("Content-Type", "application/json")
+            exchange.sendResponseHeaders(200, bytes.size.toLong())
+            exchange.responseBody.use { it.write(bytes) }; exchange.close()
+        }
+        server.createContext("/api/auth/google/finish") { exchange ->
+            val bytes = JSONObject().put("session_token", "test-session-43-chars-long-placeholder-str")
+                .put("expires_at", System.currentTimeMillis() + 86400000L)
+                .put("destination", JSONObject().put("drive_id", "owner-drive").put("folder_id", "owner-root").put("owner_id", "owner-123"))
+                .put("profile", JSONObject().put("id", "google:12345").put("email", "operator@example.com"))
+                .toString().toByteArray()
+            exchange.responseHeaders.add("Content-Type", "application/json")
+            exchange.sendResponseHeaders(200, bytes.size.toLong())
+            exchange.responseBody.use { it.write(bytes) }; exchange.close()
+        }
         server.start()
     }
     @After fun stop() { server.stop(0) }
@@ -70,5 +89,18 @@ class OnlineServiceClientTest {
         val store = prepare(); wrongDigest = true
         assertFalse(deliver(store).first); assertTrue(store.pdf(job).isFile)
         assertFalse(store().snapshot().jobs.single().delivered)
+    }
+    @Test fun googleAuthStartAndFinishEndpointsRespondCorrectly() {
+        val client = OnlineServiceClient("http://127.0.0.1:${server.address.port}")
+        val startResult = client.request("/api/auth/google/start", JSONObject().put("callback_mode", "web"))
+        assertEquals("test-state-43-chars-long-placeholder-string-01", startResult.getString("state"))
+        assertTrue(startResult.getString("authorization_url").startsWith("https://accounts.google.com"))
+
+        val finishResult = client.request("/api/auth/google/finish", JSONObject()
+            .put("state", startResult.getString("state"))
+            .put("device_secret", startResult.getString("device_secret"))
+            .put("code", "auth-code-123"))
+        assertEquals("test-session-43-chars-long-placeholder-str", finishResult.getString("session_token"))
+        assertEquals("operator@example.com", finishResult.getJSONObject("profile").getString("email"))
     }
 }

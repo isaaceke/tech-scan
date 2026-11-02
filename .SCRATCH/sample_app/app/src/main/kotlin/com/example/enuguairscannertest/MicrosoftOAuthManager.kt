@@ -91,6 +91,12 @@ object MicrosoftOAuthManager {
         CustomTabsIntent.Builder().setShowTitle(true).build().launchUrl(context, Uri.parse(url))
     }
 
+    suspend fun startGoogleSignIn(context: Context, prefs: SharedPreferences) {
+        if (OnlineScannerIdentity.enabled()) {
+            OnlineScannerIdentity.startGoogleSignIn(context, prefs)
+        }
+    }
+
     private fun tokenPost(fields: String): JSONObject {
         val conn = URL(FolderAccessPolicy.AUTHORITY + "token").openConnection() as HttpURLConnection
         try {

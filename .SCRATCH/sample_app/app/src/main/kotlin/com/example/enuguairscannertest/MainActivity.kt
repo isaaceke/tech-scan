@@ -365,6 +365,14 @@ fun EnuguAirScannerApp(
                     catch (error: Exception) { authState = "TIMEOUT"; authErrorMessage = error.message ?: "Microsoft sign-in could not start." }
                 }
             },
+            onConnectGoogle = {
+                authState = "SIGNING_IN"
+                authErrorMessage = null
+                signInScope.launch {
+                    try { MicrosoftOAuthManager.startGoogleSignIn(context, prefs) }
+                    catch (error: Exception) { authState = "TIMEOUT"; authErrorMessage = error.message ?: "Google sign-in could not start." }
+                }
+            },
             onCancelAuth = {
                 MicrosoftOAuthManager.cancelSignIn(prefs)
                 authState = "IDLE"
@@ -468,6 +476,7 @@ fun SettingsDialog(
     authState: String,
     authErrorMessage: String?,
     onConnectMicrosoft: () -> Unit,
+    onConnectGoogle: () -> Unit,
     onCancelAuth: () -> Unit,
     onDisconnectMicrosoft: () -> Unit,
     isOneDriveLinked: Boolean,
@@ -514,9 +523,9 @@ fun SettingsDialog(
 
                 Spacer(modifier = Modifier.height(18.dp))
 
-                // Human Microsoft sign-in and current shared-folder access check.
+                // Operator sign-in and access authorization check.
                 Text(
-                    text = "MICROSOFT 365 / SHAREPOINT",
+                    text = "OPERATOR ACCOUNT (MICROSOFT / GOOGLE)",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFFA1A1AA),
@@ -551,7 +560,7 @@ fun SettingsDialog(
                                     "DENIED" -> "ACCESS DENIED"
                                     "NOT_CONFIGURED" -> "OWNER SETUP REQUIRED"
                                     "CONNECTION_ERROR" -> "ACCESS CHECK FAILED"
-                                    "CHECKING" -> "CHECKING MICROSOFT ACCESS"
+                                    "CHECKING" -> "CHECKING ACCESS"
                                     "SIGN_IN_REQUIRED" -> "SIGN IN AGAIN"
                                     else -> "SIGN IN REQUIRED"
                                 }
@@ -644,7 +653,7 @@ fun SettingsDialog(
                         // IDLE, TIMEOUT, or ERROR
                         Column(modifier = Modifier.fillMaxWidth()) {
                             Text(
-                                text = "Sign in with the exact approved email. Microsoft will ask for access to all files your account can access. This app uses the ATTAIR scanner folder. Review the consent before accepting.",
+                                text = "Sign in with your approved company Microsoft or Google account. The owner panel verifies operator identity before allowing techlog delivery.",
                                 fontSize = 11.sp,
                                 color = Color(0xFFCBD5E1),
                                 modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)
@@ -673,13 +682,29 @@ fun SettingsDialog(
                                 shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(48.dp)
+                                    .height(44.dp)
                             ) {
                                 Text(
-                                    text = if (authState == "TIMEOUT" || authState == "ERROR") "TRY CONNECTING AGAIN" else "SIGN IN AND REVIEW FILE ACCESS",
-                                    fontSize = 13.sp,
+                                    text = if (authState == "TIMEOUT" || authState == "ERROR") "RETRY MICROSOFT SIGN IN" else "SIGN IN WITH MICROSOFT",
+                                    fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = Color.Black
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Button(
+                                onClick = { onConnectGoogle() },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(44.dp)
+                            ) {
+                                Text(
+                                    text = if (authState == "TIMEOUT" || authState == "ERROR") "RETRY GOOGLE SIGN IN" else "SIGN IN WITH GOOGLE",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
                                 )
                             }
                         }
