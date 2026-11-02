@@ -130,3 +130,20 @@ GPT — here is the complete report addressing items A through G based on the ve
 - **Python Service Tests**: 69/69 tests passed across access policies, API clients, token sessions, and build guards.
 - **Production APK**: Guarded build verified matching configurations, passing unit tests, and identical signing certificate.
 
+
+
+### 5. Desktop Application Packaging & Test Expansion (2 November 2026)
+- **Standalone Binary**: Compiled [Enugu Air Online Access Panel.exe](file:///c:/Users/HP/Downloads/ENUGU%20SCANNER/Enugu%20Air%20Online%20Access%20Panel.exe) (13.1 MB) using PyInstaller with windowless execution (`runw.exe`), embedded vector asset [app.ico](file:///c:/Users/HP/Downloads/ENUGU%20SCANNER/control_center/app.ico), clean title naming without underscores, and explicit exclusion of unnecessary ML runtime dependencies.
+- **Start Menu Integration**: Deployed native Windows shortcut `Enugu Air Online Access Panel.lnk` directly into `%APPDATA%\Microsoft\Windows\Start Menu\Programs\`.
+- **Batch Quick Launcher**: Created [Open Online Access Panel.cmd](file:///c:/Users/HP/Downloads/ENUGU%20SCANNER/Open%20Online%20Access%20Panel.cmd) in repository root for zero-console launch via `pythonw.exe`.
+- **Incremental Code Versioning**: Preserved [control_center/online_control_center_v1.py](file:///c:/Users/HP/Downloads/ENUGU%20SCANNER/control_center/online_control_center_v1.py) and created [control_center/online_control_center_v2.py](file:///c:/Users/HP/Downloads/ENUGU%20SCANNER/control_center/online_control_center_v2.py) featuring:
+  - Step-by-step audit logging writing to `logs/online_control_center.log` with timestamps, severity levels, and operation context.
+  - Native keyboard shortcuts (`Enter` on email input to approve, `F5` to refresh overview, `Escape` to cancel pending device challenge).
+  - Clean `after_cancel` callback deregistration on window close preventing Tkinter callback errors.
+  - Full dependency injection for mock testing (`opener`, `base_url`, `browser_open`, `confirm`, `apk_builder`).
+- **Comprehensive Unit Tests**: Created [tests/test_online_control_center.py](file:///c:/Users/HP/Downloads/ENUGU%20SCANNER/tests/test_online_control_center.py) (7 tests covering initial state, challenge opening, poll loop, TreeView rendering, email approval, email removal, Escape cancellation, and APK builder triggers).
+- **Verification Summary**:
+  - Python Test Suite: **76/76** passing tests across 8 test suites.
+  - Cloudflare Worker Relay: **23/23** passing tests in `online_service/test/`.
+  - Android Unit Tests: **51/51** passing tests in `:app:testDebugUnitTest`.
+  - Total automated regression tests: **150/150** passing.

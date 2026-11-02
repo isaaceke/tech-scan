@@ -514,3 +514,20 @@ Here is the comprehensive status update and technical handover report from the c
 - **Python Test Suite**: 69/69 tests passed across API contracts, access policies, DPAPI session stores, and build guards.
 - **Production APK**: Automated build guard generated `TECHLOG SCAN.apk` (Version 1.4 / code 5) with matching release certificate.
 
+
+
+### 4. Desktop Access Panel Packaging & Test Expansion (2 November 2026)
+- **PyInstaller Compilation**: Compiled standalone windowless executable [Enugu Air Online Access Panel.exe](file:///c:/Users/HP/Downloads/ENUGU%20SCANNER/Enugu%20Air%20Online%20Access%20Panel.exe) (13.1 MB) with bundled [app.ico](file:///c:/Users/HP/Downloads/ENUGU%20SCANNER/control_center/app.ico), clean Title Case naming with zero underscores, and exclusions for unnecessary ML frameworks (`torch`, `scipy`, `matplotlib`, `pandas`).
+- **Start Menu Deployment**: Added native Windows shortcut `Enugu Air Online Access Panel.lnk` in `%APPDATA%\Microsoft\Windows\Start Menu\Programs\`.
+- **Root Quick Launcher**: Added [Open Online Access Panel.cmd](file:///c:/Users/HP/Downloads/ENUGU%20SCANNER/Open%20Online%20Access%20Panel.cmd) for zero-console startup.
+- **Incremental Code Versioning**: Preserved [online_control_center_v1.py](file:///c:/Users/HP/Downloads/ENUGU%20SCANNER/control_center/online_control_center_v1.py) and created [online_control_center_v2.py](file:///c:/Users/HP/Downloads/ENUGU%20SCANNER/control_center/online_control_center_v2.py) featuring:
+  - Structured file logging to `logs/online_control_center.log`.
+  - Native keyboard shortcuts (`Enter` on email input to approve, `F5` to refresh overview, `Escape` to cancel pending device challenge).
+  - Clean `after_cancel` callback deregistration on window close preventing Tkinter callback errors.
+  - Dependency injection for mock testing (`opener`, `base_url`, `browser_open`, `confirm`, `apk_builder`).
+- **Comprehensive Unit Tests**: Added [tests/test_online_control_center.py](file:///c:/Users/HP/Downloads/ENUGU%20SCANNER/tests/test_online_control_center.py) (7 tests).
+- **Test Results**:
+  - Python Tests: **76/76** passed.
+  - Cloudflare Worker Relay: **23/23** passed.
+  - Android Unit Tests: **51/51** passed.
+  - Total automated verification tests: **150/150** passed.
