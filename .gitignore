@@ -126,3 +126,15 @@ logs/
 .SCRATCH/*.html
 .SCRATCH/*.svg
 .SCRATCH/*.ps1
+.SCRATCH/*.txt
+.SCRATCH/*.log
+control_center/settings.json
+control_center/owner_session.dat
+control_center/owner_session.tmp
+control_center/owner_graph_session.dat
+control_center/owner_graph_session.tmp
+.build/
+online_service/node_modules/
+online_service/.wrangler/
+online_service/.dev.vars
+online_service/.dev.vars.*

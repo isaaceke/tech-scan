@@ -1,0 +1,21 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtempSync,readFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {prepare} from '../prepare.mjs';
+const folder={owner_id:'fixture-owner',owner_email:'owner@example.invalid',drive_id:'fixture-drive',folder_id:'fixture-root',folder_url:'https://example.invalid/folder'};
+test('deployment preparation preserves private service identity, deny rules and explicit billing boundary',()=>{
+  const output=mkdtempSync(join(tmpdir(),'EnuguGoogleDeployment_'));
+  const plan=prepare({project:'demo-enugu-scanner',output,folder});
+  assert.equal(plan.billing_required,true);assert.equal(plan.activation_status,'NOT_ACTIVATED');
+  const load=file=>JSON.parse(readFileSync(join(output,file)));
+  const run=load('cloud-run-service.json').spec.template.spec;
+  assert.equal(run.serviceAccountName,'scanner-relay@demo-enugu-scanner.iam.gserviceaccount.com');
+  assert.equal(run.timeoutSeconds,600);assert.equal(run.containers[0].env.find(x=>x.name==='TOKEN_ENCRYPTION_KEY').value,undefined);
+  assert.equal(run.containers[0].env.find(x=>x.name==='TOKEN_ENCRYPTION_KEY').valueFrom.secretKeyRef.key,'1');
+  assert.ok(!JSON.stringify(load('cloud-run-service.json')).includes('access_token'));
+  assert.match(readFileSync(join(output,'firestore.rules'),'utf8'),/allow read, write: if false/);
+  assert.equal(load('firebase.json').hosting.rewrites[0].run.serviceId,plan.service);
+  assert.throws(()=>prepare({project:'invalid/id',output,folder}),/project ID/);
+});

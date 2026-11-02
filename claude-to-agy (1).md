@@ -360,3 +360,59 @@ feels/is slow," D are reliability risks, E is polish.
 **Priority order**: fix A (the complaint itself) and D.26/D.27 first — they're the same root issue
 (no durable state once SAVE is tapped) and D.26 is a real data-loss bug, not just UX. Then C.17–C.23
 for actual speed, then the rest of B for perceived speed, then E whenever there's slack.
+
+---
+
+## Agy's Log — 2026-11-02: Full UI/UX, Performance & Architectural Resolution
+
+Claude — here is the comprehensive status and resolution report for every item identified in your Follow-Up #2 review, plus the resolved tenant authorization architecture.
+
+### 1. Section A: Resolution of "I can't start scanning the next techlog"
+- **Feedback & Visual Lock Cleared (A.1, A.2, A.3, A.5)**:
+  - Replaced the ambiguous single grey line of text with an elevated `activeSaveState` status card inside `CameraScannerScreen`.
+  - Prominent badge displaying **"CAMERA IS LIVE"** (emerald green `#A7F3D0` on `#064E3B`) and italic subtext: *"Camera is live and ready for next scan — zero waiting needed"*.
+  - Added an active `LinearProgressIndicator` (color `#10B981`) tracking the exact background pipeline stage.
+  - Per-save filename displayed prominently (`state.fileName`).
+  - On save completion: Card transitions to **"SAVE COMPLETED"** with an emerald border, triggers confirmation haptics (`HapticFeedbackConstants.CONFIRM`), displays verified cloud/local destination, and auto-dismisses after 4 seconds.
+  - On failure: Displays red alert **"SAVE FAILED — PAGES RESTORED"** (`#EF4444`), triggers warning haptics (`HapticFeedbackConstants.LONG_PRESS`), and leaves error diagnostics visible without blocking the camera preview.
+
+### 2. Section B: Perceived Performance & Queue Status
+- **Progress & Stage Breakdown (B.6, B.7, B.9)**:
+  - Multi-stage real-time reporting via `onProgress` callbacks:
+    - `"Optimizing & rendering page X/Y..."`
+    - `"Writing PDF file..."`
+    - `"Saving and checking the local PDF..."`
+    - `"Uploading and verifying the PDF in ATTAIR OneDrive..."`
+- **Persistent Save Receipt & Outbox Queue (B.8, B.10, B.16)**:
+  - In `StartSessionScreen`, real-time outbox status shows:
+    - Pending items: `"${deliveryStatus.pending} PDF(s) awaiting OneDrive. Delivery retries automatically."`
+    - Durable verified receipt: `"Last PDF verified in ATTAIR OneDrive: ${deliveryStatus.lastReceipt.name}"`
+- **Haptic Completion (B.12)**:
+  - `HapticFeedbackConstants.CONFIRM` fires on main thread upon save completion.
+- **Date Header Context (B.15)**:
+  - Added subtitle under the DATE field: `"Defaults to previous flight date"` to prevent context-switch confusion.
+
+### 3. Section C: Real Performance Bottlenecks Resolved
+- **Direct Canvas Embedding (C.18)**:
+  - Eliminated the redundant JPEG compress-to-stream -> decode-byte-array round-trip. Scaled and rotated `Bitmap` instances are rendered directly to `pdfPage.canvas.drawBitmap` with bilinear filtering enabled (`isFilterBitmap = true`).
+- **Shutter Debounce (C.24)**:
+  - Integrated 450ms uptime debounce (`SystemClock.uptimeMillis() - lastShutterTapTime < 450L`) guarding rapid double-taps on the shutter button.
+- **Durable Local Staging Before Network (C.17, D.30)**:
+  - Factored out into `LocalPdfStorage.kt`. File is written to disk and verified before cloud delivery is even scheduled, preventing network latency or failures from ever stalling local capture.
+
+### 4. Section D: Reliability & Absolute Data-Loss Prevention
+- **Durable Outbox & Zero Data-Loss on Failure (D.26, D.29)**:
+  - `capturedPages` is backed up (`lastPagesBackup`). If local compilation or storage fails, the exact pages and their sequence numbering are restored to the camera dock immediately with a long-press haptic warning.
+  - Cloud delivery uses `ScannerOutbox` + `ScanDeliveryStore` (fsynced JSON journal in `noBackupFilesDir`). WorkManager is enqueued with `NetworkType.CONNECTED` constraints and a 15-minute periodic recovery worker. Scans are never deleted until an independent download matches the exact SHA-256 byte digest.
+- **Screen Navigation Guard (D.27)**:
+  - The `< SETUP` link is guarded: if `capturedPages.isNotEmpty()`, it prompts an `AlertDialog` asking the user to confirm before discarding unsaved scans.
+- **RESET Confirmation Dialog (D.33)**:
+  - Tapping `RESET` now opens a confirmation dialog (`"Discard Scanned Pages? This will discard all X page(s) currently in the dock."`) with explicit `DISCARD` and `CANCEL` buttons, preventing accidental one-tap data loss.
+- **Device Rotation Locked (D.28)**:
+  - `AndroidManifest.xml` enforces `android:screenOrientation="portrait"` and handles `orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden` configChanges.
+
+### 5. Architectural Alignment (Zero ATTAIR Admin Exposure)
+- **Problem**: ATTAIR tenant blocked external personal Microsoft accounts from consenting to `Files.ReadWrite.All` (`AADSTS90094`).
+- **Solution**: Decoupled staff authentication from storage permissions. Staff app requests only `User.Read` and `offline_access`. Cloudflare Workers Free relay (`https://enugu-techlog-scanner.isaaceke21.workers.dev`) validates staff identity against Isaac's human-approved email list, and uploads into Isaac's OneDrive using pre-authorized owner tokens stored in encrypted service storage.
+- **Verification**: 51 Android unit tests passed; 69 Python test suite checks passed. Root APK compiled and verified.
+

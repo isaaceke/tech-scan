@@ -122,6 +122,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        MicrosoftOAuthManager.initialize(this)
         enableEdgeToEdge()
         handleOAuthIntent(intent)
         setContent {
@@ -189,7 +190,7 @@ class MainActivity : ComponentActivity() {
 }
 
 class ScannedPage(
-    val sequenceNumber: Int,
+    var sequenceNumber: Int,
     var bitmap: Bitmap,
     val isLandscape: Boolean,
     var isHighResReady: Boolean = false
@@ -221,6 +222,7 @@ fun EnuguAirScannerApp(
 ) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("techlog_scanner_prefs", Context.MODE_PRIVATE) }
+    val signInScope = rememberCoroutineScope()
 
     // Microsoft 365 Cloud Ingestion State
     var isMicrosoftConnected by remember {
@@ -231,14 +233,34 @@ fun EnuguAirScannerApp(
     }
     var authState by remember { mutableStateOf("IDLE") } // "IDLE", "SIGNING_IN", "VERIFYING", "TIMEOUT", "ERROR"
     var authErrorMessage by remember { mutableStateOf<String?>(null) }
+    var operatorStatus by remember { mutableStateOf(MicrosoftOAuthManager.getOperatorStatus(prefs)) }
+    var operatorServerMessage by remember { mutableStateOf<String?>(null) }
+    val deliveryStatus by ScannerOutbox.status.collectAsState()
 
-    // Auto-timeout: If in SIGNING_IN for > 14 seconds without intent, reset to TIMEOUT
+    LaunchedEffect(isMicrosoftConnected) {
+        if (isMicrosoftConnected) {
+            while (true) {
+                val result = MicrosoftOAuthManager.refreshOperatorStatus(prefs)
+                operatorStatus = result.status
+                operatorServerMessage = result.message
+                if (result.status == "APPROVED" && deliveryStatus.pending > 0) ScannerOutbox.kick()
+                microsoftConnectedEmail = MicrosoftOAuthManager.getConnectedEmail(prefs)
+                delay(30000L)
+            }
+        } else {
+            operatorStatus = "NOT_SIGNED_IN"
+            operatorServerMessage = null
+        }
+    }
+
+    // Allow time for account selection, MFA and the Microsoft consent screen.
     LaunchedEffect(authState) {
         if (authState == "SIGNING_IN") {
-            kotlinx.coroutines.delay(14000L)
+            kotlinx.coroutines.delay(300000L)
             if (authState == "SIGNING_IN") {
+                MicrosoftOAuthManager.cancelSignIn(prefs)
                 authState = "TIMEOUT"
-                authErrorMessage = "Sign-in didn't complete. Tap to retry."
+                authErrorMessage = "Microsoft sign-in did not complete within five minutes. Tap to retry."
             }
         }
     }
@@ -331,14 +353,20 @@ fun EnuguAirScannerApp(
             },
             isMicrosoftConnected = isMicrosoftConnected,
             microsoftEmail = microsoftConnectedEmail,
+            operatorStatus = operatorStatus,
+            operatorServerMessage = operatorServerMessage,
             authState = authState,
             authErrorMessage = authErrorMessage,
             onConnectMicrosoft = {
                 authState = "SIGNING_IN"
                 authErrorMessage = null
-                MicrosoftOAuthManager.startSignIn(context, prefs)
+                signInScope.launch {
+                    try { MicrosoftOAuthManager.startSignIn(context, prefs) }
+                    catch (error: Exception) { authState = "TIMEOUT"; authErrorMessage = error.message ?: "Microsoft sign-in could not start." }
+                }
             },
             onCancelAuth = {
+                MicrosoftOAuthManager.cancelSignIn(prefs)
                 authState = "IDLE"
                 authErrorMessage = null
             },
@@ -377,6 +405,7 @@ fun EnuguAirScannerApp(
                 openTaskCount = auditorTasks.size,
                 onOpenSettings = { showSettingsDialog = true },
                 onViewTasks = { currentScreen = "AUDITOR_TASKS" },
+                deliveryStatus = deliveryStatus,
                 onStartScanning = { currentScreen = "CAMERA_SCANNER" }
             )
         }
@@ -434,6 +463,8 @@ fun SettingsDialog(
     onUpdateFleet: (List<String>) -> Unit,
     isMicrosoftConnected: Boolean,
     microsoftEmail: String?,
+    operatorStatus: String,
+    operatorServerMessage: String?,
     authState: String,
     authErrorMessage: String?,
     onConnectMicrosoft: () -> Unit,
@@ -483,7 +514,7 @@ fun SettingsDialog(
 
                 Spacer(modifier = Modifier.height(18.dp))
 
-                // Microsoft 365 Direct Ingestion (1-Tap SSO, Zero Recurring Validation)
+                // Human Microsoft sign-in and current shared-folder access check.
                 Text(
                     text = "MICROSOFT 365 / SHAREPOINT",
                     fontSize = 12.sp,
@@ -514,16 +545,21 @@ fun SettingsDialog(
                                     fontWeight = FontWeight.Bold,
                                     color = Color.White
                                 )
-                                val opStatus = MicrosoftOAuthManager.getOperatorStatus(prefs)
+                                val opStatus = operatorStatus
                                 val statusText = when (opStatus) {
-                                    "APPROVED" -> "APPROVED OPERATOR"
-                                    "REJECTED" -> "APPROVAL REJECTED"
-                                    else -> "APPROVAL PENDING"
+                                    "APPROVED" -> "ACCESS GRANTED"
+                                    "DENIED" -> "ACCESS DENIED"
+                                    "NOT_CONFIGURED" -> "OWNER SETUP REQUIRED"
+                                    "CONNECTION_ERROR" -> "ACCESS CHECK FAILED"
+                                    "CHECKING" -> "CHECKING MICROSOFT ACCESS"
+                                    "SIGN_IN_REQUIRED" -> "SIGN IN AGAIN"
+                                    else -> "SIGN IN REQUIRED"
                                 }
                                 val statusColor = when (opStatus) {
                                     "APPROVED" -> Color(0xFF10B981)
-                                    "REJECTED" -> Color(0xFFEF4444)
-                                    else -> Color(0xFFF59E0B)
+                                    "DENIED" -> Color(0xFFEF4444)
+                                    "CHECKING", "NOT_CONFIGURED" -> Color(0xFFF59E0B)
+                                    else -> Color(0xFFEF4444)
                                 }
                                 Text(
                                     text = statusText,
@@ -607,6 +643,12 @@ fun SettingsDialog(
                     else -> {
                         // IDLE, TIMEOUT, or ERROR
                         Column(modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                text = "Sign in with the exact approved email. Microsoft will ask for access to all files your account can access. This app uses the ATTAIR scanner folder. Review the consent before accepting.",
+                                fontSize = 11.sp,
+                                color = Color(0xFFCBD5E1),
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)
+                            )
                             if (!authErrorMessage.isNullOrBlank()) {
                                 Surface(
                                     color = Color(0xFF3F1D1D),
@@ -634,7 +676,7 @@ fun SettingsDialog(
                                     .height(48.dp)
                             ) {
                                 Text(
-                                    text = if (authState == "TIMEOUT" || authState == "ERROR") "TRY CONNECTING AGAIN" else "CONNECT MICROSOFT 365",
+                                    text = if (authState == "TIMEOUT" || authState == "ERROR") "TRY CONNECTING AGAIN" else "SIGN IN AND REVIEW FILE ACCESS",
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = Color.Black
@@ -644,124 +686,9 @@ fun SettingsDialog(
                     }
                 }
 
-                // Azure App (Client) ID Configuration
-                var clientIdInput by remember { mutableStateOf(MicrosoftOAuthManager.getClientId(prefs)) }
-                var showClientConfig by remember { mutableStateOf(false) }
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "AZURE APP ID",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFFA1A1AA)
-                    )
-                    Text(
-                        text = if (showClientConfig) "DONE" else "EDIT",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                        modifier = Modifier.clickable { showClientConfig = !showClientConfig }
-                    )
-                }
-
-                if (showClientConfig) {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    OutlinedTextField(
-                        value = clientIdInput,
-                        onValueChange = {
-                            clientIdInput = it
-                            MicrosoftOAuthManager.setCustomClientId(prefs, it)
-                        },
-                        singleLine = true,
-                        placeholder = { Text("Paste Azure Application (Client) ID", color = Color(0xFF71717A), fontSize = 12.sp) },
-                        textStyle = LocalTextStyle.current.copy(
-                            fontSize = 12.sp,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Medium,
-                            color = Color.White
-                        ),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = Color(0xFF27272A),
-                            unfocusedContainerColor = Color(0xFF27272A),
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            focusedBorderColor = Color.White,
-                            unfocusedBorderColor = Color(0xFF3F3F46)
-                        ),
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Redirect URI: techlogscan://auth",
-                        fontSize = 10.sp,
-                        color = Color(0xFFA1A1AA)
-                    )
-                }
-
-                // Backend Server URL Configuration
-                var backendUrlInput by remember { mutableStateOf(MicrosoftOAuthManager.getBackendUrl(prefs)) }
-                var showBackendConfig by remember { mutableStateOf(false) }
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "BACKEND SERVER URL",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFFA1A1AA)
-                    )
-                    Text(
-                        text = if (showBackendConfig) "DONE" else "EDIT",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                        modifier = Modifier.clickable { showBackendConfig = !showBackendConfig }
-                    )
-                }
-
-                if (showBackendConfig) {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    OutlinedTextField(
-                        value = backendUrlInput,
-                        onValueChange = {
-                            backendUrlInput = it
-                            MicrosoftOAuthManager.setBackendUrl(prefs, it)
-                        },
-                        singleLine = true,
-                        placeholder = { Text("http://10.0.2.2:8000 or https://...", color = Color(0xFF71717A), fontSize = 12.sp) },
-                        textStyle = LocalTextStyle.current.copy(
-                            fontSize = 12.sp,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Medium,
-                            color = Color.White
-                        ),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = Color(0xFF27272A),
-                            unfocusedContainerColor = Color(0xFF27272A),
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            focusedBorderColor = Color.White,
-                            unfocusedBorderColor = Color(0xFF3F3F46)
-                        ),
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                    )
+                if (isMicrosoftConnected && operatorServerMessage != null) {
+                    Text(text = operatorServerMessage, color = Color(0xFFCBD5E1), fontSize = 11.sp,
+                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
                 }
 
                 Spacer(modifier = Modifier.height(18.dp))
@@ -934,7 +861,8 @@ fun StartSessionScreen(
     openTaskCount: Int,
     onOpenSettings: () -> Unit,
     onViewTasks: () -> Unit,
-    onStartScanning: () -> Unit
+    onStartScanning: () -> Unit,
+    deliveryStatus: ScannerOutbox.Status
 ) {
     var aircraftMenuExpanded by remember { mutableStateOf(false) }
 
@@ -1045,6 +973,14 @@ fun StartSessionScreen(
                 }
             }
 
+            if (deliveryStatus.pending > 0) {
+                Text(text = "${deliveryStatus.pending} PDF(s) awaiting OneDrive. Delivery retries automatically." +
+                    if (deliveryStatus.lastError.isNotBlank()) "\n${deliveryStatus.lastError.take(180)}" else "",
+                    color = Color(0xFFFBBF24), fontSize = 12.sp, modifier = Modifier.fillMaxWidth().padding(top = 14.dp))
+            } else if (deliveryStatus.lastReceipt != null) {
+                Text(text = "Last PDF verified in ATTAIR OneDrive: ${deliveryStatus.lastReceipt.name}",
+                    color = Color(0xFF10B981), fontSize = 12.sp, modifier = Modifier.fillMaxWidth().padding(top = 14.dp))
+            }
             Spacer(modifier = Modifier.height(32.dp))
 
             // 1. Aircraft Selector
@@ -1114,13 +1050,24 @@ fun StartSessionScreen(
 
             // 2. Date Input (CALENDAR PICKER MODAL - STRICTLY NO KEYBOARD)
             Column(modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    text = "DATE",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFFA1A1AA),
-                    letterSpacing = 0.5.sp
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "DATE",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFA1A1AA),
+                        letterSpacing = 0.5.sp
+                    )
+                    Text(
+                        text = "Defaults to previous flight date",
+                        fontSize = 11.sp,
+                        color = Color(0xFF71717A)
+                    )
+                }
                 Spacer(modifier = Modifier.height(6.dp))
 
                 Surface(
@@ -1313,6 +1260,8 @@ fun CameraScannerScreen(
     var activeSaveState by remember { mutableStateOf<SaveProgressState?>(null) }
     var lastShutterTapTime by remember { mutableStateOf(0L) }
     var modeFlashText by remember { mutableStateOf<String?>(null) }
+    var showResetConfirmation by remember { mutableStateOf(false) }
+    var showExitConfirmation by remember { mutableStateOf(false) }
 
     LaunchedEffect(modeFlashText) {
         if (modeFlashText != null) {
@@ -1372,7 +1321,13 @@ fun CameraScannerScreen(
                             fontWeight = FontWeight.Bold,
                             color = Color.White,
                             modifier = Modifier
-                                .clickable { onExitToSetup() }
+                                .clickable {
+                                    if (capturedPages.isNotEmpty()) {
+                                        showExitConfirmation = true
+                                    } else {
+                                        onExitToSetup()
+                                    }
+                                }
                                 .padding(end = 12.dp)
                         )
                         if (isPatchMode) {
@@ -1877,8 +1832,7 @@ fun CameraScannerScreen(
                         modifier = Modifier
                             .align(Alignment.CenterStart)
                             .clickable(enabled = capturedPages.isNotEmpty()) {
-                                capturedPages.clear()
-                                sequenceCounter.set(1)
+                                showResetConfirmation = true
                             }
                             .padding(8.dp)
                     )
@@ -2006,7 +1960,7 @@ fun CameraScannerScreen(
                                         if (saved) {
                                             view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
                                             val successMsg = if (savedToCloud) {
-                                                "Uploaded to SPLIT/$acFolder on OneDrive"
+                                                cloudMsg.ifBlank { "Stored on the shared server" }
                                             } else if (isCloudActive) {
                                                 "Saved locally. Cloud: $cloudMsg"
                                             } else {
@@ -2025,8 +1979,12 @@ fun CameraScannerScreen(
                                             }
                                         } else {
                                             // DATA-LOSS GUARD: Restore pages so user can retry!
+                                            val restoredPages = lastPagesBackup + capturedPages.toList()
                                             capturedPages.clear()
-                                            capturedPages.addAll(lastPagesBackup)
+                                            restoredPages.forEachIndexed { index, page ->
+                                                page.sequenceNumber = index + 1
+                                                capturedPages.add(page)
+                                            }
                                             sequenceCounter.set(capturedPages.size + 1)
                                             view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
 
@@ -2061,6 +2019,57 @@ fun CameraScannerScreen(
                 }
             }
         }
+    }
+
+    if (showResetConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showResetConfirmation = false },
+            title = { Text("Discard Scanned Pages?", color = Color.White, fontWeight = FontWeight.Bold) },
+            text = { Text("This will discard all ${capturedPages.size} page(s) currently in the dock.", color = Color(0xFFCBD5E1)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        capturedPages.clear()
+                        sequenceCounter.set(1)
+                        showResetConfirmation = false
+                    }
+                ) {
+                    Text("DISCARD", color = Color(0xFFEF4444), fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetConfirmation = false }) {
+                    Text("CANCEL", color = Color.White)
+                }
+            },
+            containerColor = Color(0xFF18181B)
+        )
+    }
+
+    if (showExitConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showExitConfirmation = false },
+            title = { Text("Exit to Setup?", color = Color.White, fontWeight = FontWeight.Bold) },
+            text = { Text("You have ${capturedPages.size} unsaved scanned page(s). Exiting will discard them.", color = Color(0xFFCBD5E1)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        capturedPages.clear()
+                        sequenceCounter.set(1)
+                        showExitConfirmation = false
+                        onExitToSetup()
+                    }
+                ) {
+                    Text("EXIT & DISCARD", color = Color(0xFFEF4444), fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showExitConfirmation = false }) {
+                    Text("KEEP SCANNING", color = Color.White)
+                }
+            },
+            containerColor = Color(0xFF18181B)
+        )
     }
 }
 
@@ -2330,10 +2339,9 @@ suspend fun compileAndSaveOptimizedPdf(
 
             pdfDocument.finishPage(pdfPage)
 
-            // Discard bitmaps immediately
+            // Release render copies; keep originals available if the local save fails.
             if (finalBitmap != scaled) finalBitmap.recycle()
             if (scaled != raw) scaled.recycle()
-            raw.recycle()
         }
 
         onProgress?.invoke("Writing PDF file...")
@@ -2345,23 +2353,29 @@ suspend fun compileAndSaveOptimizedPdf(
 
         val prefs = context.getSharedPreferences("techlog_scanner_prefs", Context.MODE_PRIVATE)
 
-        // 1. UPLOAD TO BACKEND (WHICH STREAMS INTO ISAAC EKE'S ONEDRIVE APPFOLDER)
+        onProgress?.invoke("Saving and checking the local PDF...")
+        LocalPdfStorage.save(context, tempPdfFile, aircraftFolder, fileName, isPatch)
+        val savedLocally = true
+        pages.forEach { if (!it.bitmap.isRecycled) it.bitmap.recycle() }
+
+        // Only a receipt matching the saved PDF counts as ATTAIR delivery.
         var savedToCloud = false
         var cloudMessage = ""
         if (MicrosoftOAuthManager.isConnected(prefs)) {
-            onProgress?.invoke("Streaming to Isaac Eke's OneDrive...")
-            val (cloudSuccess, msg) = MicrosoftOAuthManager.uploadPdfToBackend(
-                prefs = prefs,
-                pdfFile = tempPdfFile,
-                aircraftFolder = aircraftFolder,
-                fileName = fileName,
-                isPatch = isPatch
-            )
-            savedToCloud = cloudSuccess
-            cloudMessage = msg
+            onProgress?.invoke("Uploading and verifying the PDF in ATTAIR OneDrive...")
+            try {
+                val (cloudSuccess, msg) = ScannerOutbox.saveAndDeliver(context, tempPdfFile, aircraftFolder, fileName, isPatch)
+                savedToCloud = cloudSuccess
+                cloudMessage = msg
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                cloudMessage = "The local PDF is saved. OneDrive delivery could not complete: ${error.message ?: "delivery error"}"
+            }
         }
 
         // 2. SAF SYNC WRITE (If external tree is optionally linked)
+        var savedToSelectedFolder = false
         val treeUriStr = prefs.getString("onedrive_tree_uri", null)
         if (treeUriStr != null) {
             try {
@@ -2383,8 +2397,8 @@ suspend fun compileAndSaveOptimizedPdf(
                         if (newFile != null) {
                             context.contentResolver.openOutputStream(newFile.uri)?.use { outputStream ->
                                 tempPdfFile.inputStream().use { it.copyTo(outputStream) }
+                                savedToSelectedFolder = true
                             }
-                            savedToCloud = true
                         }
                     }
                 }
@@ -2393,53 +2407,12 @@ suspend fun compileAndSaveOptimizedPdf(
             }
         }
 
-        // 3. LOCAL DOCUMENTS STORAGE
-        val subPath = if (isPatch) {
-            "EnuguAirScanner/SPLIT/$aircraftFolder/patches"
-        } else {
-            "EnuguAirScanner/SPLIT/$aircraftFolder"
-        }
-
-        var savedLocally = false
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val contentValues = ContentValues().apply {
-                put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-                put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
-                put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOCUMENTS}/$subPath")
-            }
-
-            val uri = context.contentResolver.insert(MediaStore.Files.getContentUri("external"), contentValues)
-            if (uri != null) {
-                context.contentResolver.openOutputStream(uri)?.use { outputStream ->
-                    tempPdfFile.inputStream().use { it.copyTo(outputStream) }
-                }
-                savedLocally = true
-            }
-        }
-
-        if (!savedLocally) {
-            val docDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), subPath)
-            if (!docDir.exists()) docDir.mkdirs()
-
-            val targetFile = File(docDir, fileName)
-            if (targetFile.exists()) {
-                val backupFile = File(docDir, "$fileName.bak")
-                if (backupFile.exists()) backupFile.delete()
-                targetFile.renameTo(backupFile)
-            }
-
-            FileOutputStream(targetFile).use { outputStream ->
-                tempPdfFile.inputStream().use { it.copyTo(outputStream) }
-            }
-            savedLocally = true
-        }
-
         // Clean up temporary cache file
         if (tempPdfFile.exists()) {
             tempPdfFile.delete()
         }
 
-        return@withContext Triple(savedLocally || savedToCloud, savedToCloud, cloudMessage)
+        return@withContext FolderAccessPolicy.deliveryResult(savedLocally, savedToSelectedFolder, savedToCloud, cloudMessage)
     } catch (e: Exception) {
         e.printStackTrace()
         return@withContext Triple(false, false, e.message ?: "PDF generation error")

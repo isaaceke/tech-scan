@@ -1,0 +1,15 @@
+*
+!package.json
+!package-lock.json
+!src/
+src/*
+!src/service.mjs
+!src/panel.html
+!src/panel.js.txt
+!src/panel.css.txt
+!google/
+google/*
+!google/firestore-store.mjs
+!google/http-server.mjs
+!google/main.mjs
+!Dockerfile

@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Enugu Air Access Panel</title><link rel="stylesheet" href="/panel.css"><script src="/panel.js" defer></script></head>
+<body><main>
+<header><p class="eyebrow">ENUGU AIR</p><h1>Scanner access</h1><p>Approve the Microsoft emails that may send scans to your folder.</p></header>
+<section><div class="row"><h2>OneDrive connection</h2><button id="signin">SIGN IN AS OWNER</button><button id="signout" hidden>Sign out of panel</button></div><p id="connection" role="status">Checking online service…</p>
+<div id="challenge" hidden><p>Enter this code on Microsoft's sign-in page:</p><strong id="code"></strong><p><a id="microsoft" target="_blank" rel="noopener noreferrer">Open Microsoft sign-in</a></p><button id="cancel">Cancel sign-in</button></div></section>
+<section id="access" hidden><h2>Approved emails</h2><form id="approve-form"><label for="email">Microsoft account email</label><div class="row"><input id="email" type="email" maxlength="254" required autocomplete="off" placeholder="name@example.com"><button type="submit">APPROVE EMAIL</button></div></form><p>Use the account's primary Microsoft email. Only accounts on this list can deliver scans.</p><div class="row"><button id="refresh">Refresh list</button><a id="folder" target="_blank" rel="noopener noreferrer">Open scanner folder</a></div><table><thead><tr><th>Email</th><th>Account</th><th></th></tr></thead><tbody id="emails"></tbody></table><p id="empty" hidden>No emails have been approved.</p></section>
+<section id="deliveries" hidden><h2>Verified deliveries</h2><p>These PDFs were read back and checked in your OneDrive.</p><div id="receipts"></div></section>
+<section id="history" hidden><h2>Activity history</h2><p>Account decisions, account connections and verified deliveries.</p><div id="audit"></div></section>
+<p id="message" role="status" aria-live="polite"></p>
+</main></body></html>

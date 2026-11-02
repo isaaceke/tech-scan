@@ -1,0 +1,6 @@
+{
+  "mode": "online",
+  "server_url": "https://enugu-techlog-scanner.isaaceke21.workers.dev",
+  "service": "enugu-scanner-relay",
+  "hosting": "cloudflare"
+}

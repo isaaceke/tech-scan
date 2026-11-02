@@ -1,0 +1,17 @@
+{
+  "name": "enugu-scanner-online-service",
+  "private": true,
+  "type": "module",
+  "engines": {"node": ">=24 <25"},
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:google": "node --test google/test/*.test.mjs",
+    "start:google": "node google/main.mjs",
+    "check": "wrangler deploy --dry-run --outdir ../.build/worker-bundle",
+    "dev": "wrangler dev --port 8787",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {"@google-cloud/firestore": "9.4.0"},
+  "overrides": {"glob": "14.0.3"},
+  "devDependencies": {"wrangler": "4.156.0", "miniflare": "4.20260730.0"}
+}

@@ -1,0 +1,92 @@
+'use strict';
+const $ = id => document.getElementById(id);
+let challenge = null, generation = 0, pollTimer, refreshing = false;
+async function api(path, body) {
+  const response = await fetch(path, {method: body === undefined ? 'GET' : 'POST', credentials: 'same-origin',
+    headers: body === undefined ? {} : {'Content-Type': 'application/json'}, body: body === undefined ? undefined : JSON.stringify(body)});
+  const result = await response.json();
+  if (!response.ok) throw Error(result.error || 'The online service did not complete this action.');
+  return result;
+}
+function message(text) { $('message').textContent = text; }
+function signedOut() { $('access').hidden = $('deliveries').hidden = $('history').hidden = $('signout').hidden = true; $('signin').hidden = false; }
+async function refresh() {
+  if (refreshing) return; refreshing = true;
+  try {
+    const health = await api('/health');
+    $('connection').textContent = health.storage_connected ? 'Online service connected to the owner folder.' : 'Online service is running. Sign in as owner to connect your OneDrive.';
+    let result;
+    try { result = await api('/api/owner/overview'); }
+    catch (error) { signedOut(); return; }
+    $('access').hidden = $('deliveries').hidden = $('history').hidden = $('signout').hidden = false; $('signin').hidden = !!result.storage_connected;
+    $('connection').textContent = result.storage_connected ? `Connected as ${result.owner.email}. Uploads work independently of this computer.` : 'OneDrive needs owner sign-in again. Saved scans remain on the phones.';
+    $('folder').href = result.destination.folder_url;
+    $('emails').replaceChildren(); $('empty').hidden = result.approved_emails.length > 0;
+    for (const approval of result.approved_emails.sort((a,b) => a.email.localeCompare(b.email))) {
+      const tr = document.createElement('tr');
+      for (const text of [approval.email, approval.identity_id ? 'Signed-in account linked' : 'Awaiting first sign-in']) {
+        const td = document.createElement('td'); td.textContent = text; tr.append(td);
+      }
+      const td = document.createElement('td'), button = document.createElement('button'); button.textContent = 'Remove';
+      button.addEventListener('click', async () => {
+        if (!confirm(`Remove scan access for ${approval.email}?`)) return;
+        button.disabled = true;
+        try { await api('/api/owner/emails/remove', {email: approval.email}); message('Access removed. Further uploads from this account will be rejected.'); await refresh(); }
+        catch (error) { message(error.message); button.disabled = false; }
+      }); td.append(button); tr.append(td); $('emails').append(tr);
+    }
+    $('receipts').replaceChildren();
+    for (const receipt of result.receipts) {
+      const div = document.createElement('div'); div.className = 'receipt'; div.textContent = receipt.name;
+      const small = document.createElement('small'); small.textContent = `${receipt.email} · ${receipt.aircraft}${receipt.patch ? '/patches' : ''} · ${new Date(receipt.verified_at).toLocaleString()}`;
+      div.append(small); $('receipts').append(div);
+    }
+    if (!result.receipts.length) $('receipts').textContent = 'No verified deliveries yet.';
+    $('audit').replaceChildren();
+    const labels = {EMAIL_APPROVED: 'Email approved', EMAIL_REMOVED: 'Email removed', ACCOUNT_LINKED: 'Microsoft account linked',
+      OWNER_CONNECTED: 'OneDrive connected', DELIVERY_VERIFIED: 'PDF delivery verified'};
+    for (const event of result.audit || []) {
+      const div = document.createElement('div'); div.className = 'receipt';
+      div.textContent = `${labels[event.action] || event.action} · ${event.subject.name || event.subject.email || event.actor.email}`;
+      const small = document.createElement('small');
+      small.textContent = `${event.actor.email} · ${new Date(event.timestamp).toLocaleString()}`;
+      div.append(small); $('audit').append(div);
+    }
+    if (!result.audit?.length) $('audit').textContent = 'No recorded activity yet.';
+  } catch (error) { $('connection').textContent = error.message; }
+  finally { refreshing = false; }
+}
+async function poll(version) {
+  if (version !== generation || !challenge) return;
+  try {
+    const result = await api('/api/owner/signin/poll', {id: challenge.id, secret: challenge.secret});
+    if (version !== generation) return;
+    if (result.status === 'PENDING') { pollTimer = setTimeout(() => poll(version), result.interval * 1000); return; }
+    // The owner session is an HttpOnly cookie. Microsoft tokens never enter this page.
+    challenge = null; $('challenge').hidden = true; $('signin').disabled = false;
+    message('Your OneDrive is connected. Add approved emails below.'); await refresh();
+  } catch (error) { if (version !== generation) return; challenge = null; $('challenge').hidden = true; $('signin').disabled = false; message(error.message); }
+}
+$('signin').addEventListener('click', async () => {
+  const version = ++generation; $('signin').disabled = true; message('Starting owner sign-in…');
+  try {
+    challenge = await api('/api/owner/signin/start', {});
+    if (version !== generation) return;
+    $('code').textContent = challenge.user_code; $('microsoft').href = challenge.verification_uri;
+    $('challenge').hidden = false; message('Complete your private Microsoft sign-in using the code above.');
+    pollTimer = setTimeout(() => poll(version), challenge.interval * 1000);
+  } catch (error) { $('signin').disabled = false; message(error.message); }
+});
+$('cancel').addEventListener('click', () => { generation++; clearTimeout(pollTimer); challenge = null; $('challenge').hidden = true; $('signin').disabled = false; message('Sign-in cancelled in this panel.'); });
+$('signout').addEventListener('click', async () => {
+  try { await api('/api/auth/logout', {}); signedOut(); message('Signed out of the panel. The online upload connection remains active.'); }
+  catch (error) { message(error.message); }
+});
+$('approve-form').addEventListener('submit', async event => {
+  event.preventDefault(); const button = event.submitter; button.disabled = true;
+  try { await api('/api/owner/emails', {email: $('email').value}); $('email').value = ''; message('Email approved. Send this person the configured scanner APK.'); await refresh(); }
+  catch (error) { message(error.message); }
+  finally { button.disabled = false; }
+});
+$('refresh').addEventListener('click', refresh);
+refresh(); setInterval(refresh, 30000);

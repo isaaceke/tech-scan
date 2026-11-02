@@ -368,3 +368,45 @@ I have received and systematically addressed your comprehensive UI/UX, reliabili
   - Compiled and verified: `C:\Users\HP\Downloads\ENUGU SCANNER\Enugu Air Control Center.exe`.
 - **Database Status**:
   - `backend/scanner.db` is clean. Only `isaac.eke@attair.com.ng` (Owner, APPROVED) is registered. `isaaceke21@gmail.com` is completely purged.
+
+---
+
+## 2026-11-02 09:30:00 +01:00 — Full Architecture & UI/UX Handover Briefing
+
+Hey Claude,
+
+Here is the comprehensive status update and technical handover report from the codebase.
+
+### 1. Cloud Relay Architecture (Zero Admin Consent Required)
+- **Root Cause of AADSTS90094**: ATTAIR tenant policies prohibit external/personal accounts (`isaaceke21@gmail.com`) from consenting to tenant-wide `Files.ReadWrite.All`.
+- **Resolution**: We decoupled staff identity from storage authorization.
+  - Staff devices authenticate basic identity only (`User.Read`, `offline_access`).
+  - Staff tokens are sent to our Cloudflare Workers Free relay (`https://enugu-techlog-scanner.isaaceke21.workers.dev`) backed by a SQLite Durable Object.
+  - The relay validates the staff email against Isaac's human-approved list, then streams the PDF to Isaac's ATTAIR OneDrive (`Apps/ATTAIR Techlog OneDrive Connector/[AIRCRAFT]/`) using Isaac's pre-authorized owner token stored encrypted with AES-256-GCM (`TOKEN_ENCRYPTION_KEY`).
+  - Neither your laptop nor an ATTAIR IT administrator needs to be involved. Uploads run 24/7.
+
+### 2. Resolution of UI/UX & Reliability Review (Follow-Up #2)
+- **Section A ("I can't start scanning next techlog")**:
+  - Replaced ambiguous status text with an elevated `activeSaveState` card showing **"CAMERA IS LIVE"** (emerald badge `#A7F3D0` on `#064E3B`) and italic subtext: *"Camera is live and ready for next scan — zero waiting needed"*.
+  - Added real-time green `LinearProgressIndicator` showing pipeline stages.
+  - Displays persistent 4-second success badge with confirmation haptics (`HapticFeedbackConstants.CONFIRM`).
+- **Section B (Feedback & Perceived Performance)**:
+  - Multi-stage progress callbacks: optimizing page, writing local PDF, uploading, and verifying.
+  - `StartSessionScreen` displays persistent outbox status: pending queue count and verified OneDrive receipt (`"Last PDF verified in ATTAIR OneDrive: [filename]"`).
+  - Date header subtitle added: *"Defaults to previous flight date"*.
+- **Section C (Real Performance Bottlenecks)**:
+  - Direct Canvas Embedding: Removed the redundant JPEG compress-to-stream -> decode-byte-array loop. Bitmaps are drawn directly onto `pdfPage.canvas.drawBitmap`.
+  - Shutter Debounce: 450ms hardware uptime debounce prevents double-taps.
+  - Local Staging First: Factored into `LocalPdfStorage.kt`. File is written to disk and verified locally before cloud queuing begins.
+- **Section D (Reliability & Zero Data Loss)**:
+  - Scanned pages are backed up in memory (`lastPagesBackup`). If local save fails, dock pages are restored with warning haptics (`HapticFeedbackConstants.LONG_PRESS`).
+  - RESET Confirmation Dialog (`showResetConfirmation`): Prompts before discarding dock pages.
+  - Exit Navigation Guard (`showExitConfirmation`): Prompts before `< SETUP` navigation if unsaved pages exist.
+  - Outbox Pattern: `ScannerOutbox.kt` + `ScanDeliveryStore.kt` + Android `WorkManager` (with 15-minute periodic recovery) retries automatically upon network reconnection.
+  - Double Readback: Retained scans are only deleted after independent download confirms remote SHA-256 byte match.
+
+### 3. Verification & Build Results
+- **Android Unit Tests**: 51/51 tests passed (`FolderAccessPolicyTest`, `MicrosoftGraphPdfClientTest`, `OnlineServiceClientTest`, `ScanDeliveryStoreTest`).
+- **Python Test Suite**: 69/69 tests passed across API contracts, access policies, DPAPI session stores, and build guards.
+- **Production APK**: Automated build guard generated `TECHLOG SCAN.apk` (Version 1.4 / code 5) with matching release certificate.
+

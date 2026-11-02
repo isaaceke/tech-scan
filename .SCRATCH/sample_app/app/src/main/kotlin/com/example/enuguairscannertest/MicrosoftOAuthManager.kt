@@ -1,6 +1,5 @@
 package com.example.enuguairscannertest
 
-import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
@@ -9,10 +8,11 @@ import android.util.Base64
 import androidx.browser.customtabs.CustomTabsIntent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import org.json.JSONArray
 import org.json.JSONObject
-import java.io.ByteArrayOutputStream
 import java.io.File
-import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -20,381 +20,261 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 
 object MicrosoftOAuthManager {
-
-    // Microsoft multi-tenant public client ID (or configured custom client ID)
     const val DEFAULT_CLIENT_ID = "dc7101d3-3bb7-462f-92e8-374958f4ddb5"
     const val REDIRECT_URI = "techlogscan://auth"
-    const val SCOPES = "offline_access User.Read"
+    // Requested only by the human sign-in action. Microsoft must grant consent.
+    const val SCOPES = "offline_access User.Read Files.ReadWrite.All"
+    private const val GRAPH = "https://graph.microsoft.com/v1.0"
+    private const val ACCESS = "ms_access_token"
+    private const val REFRESH = "ms_refresh_token"
+    private const val EXPIRES = "ms_token_expires_at"
+    private const val EMAIL = "ms_user_email"
+    private const val SCOPE = "ms_granted_scope"
+    private const val VERIFIER = "ms_code_verifier"
+    private const val STATE = "ms_auth_state"
+    private const val STATUS = "operator_approval_status"
+    private val statusMutex = Mutex()
+    private val tokenMutex = Mutex()
+    private var folderConfig = JSONObject()
+    data class OperatorSyncResult(val status: String, val message: String? = null)
+    private class GraphException(val statusCode: Int, message: String) : Exception(message)
 
-    const val DEFAULT_BACKEND_URL = "https://enugu-air-scanner.onrender.com"
-    private const val PREFS_KEY_BACKEND_URL = "backend_server_url"
-    private const val PREFS_KEY_OPERATOR_STATUS = "operator_approval_status"
-
-    private const val PREFS_KEY_ACCESS_TOKEN = "ms_access_token"
-    private const val PREFS_KEY_REFRESH_TOKEN = "ms_refresh_token"
-    private const val PREFS_KEY_EXPIRES_AT = "ms_token_expires_at"
-    private const val PREFS_KEY_USER_EMAIL = "ms_user_email"
-    private const val PREFS_KEY_CODE_VERIFIER = "ms_code_verifier"
-    private const val PREFS_KEY_CUSTOM_CLIENT_ID = "ms_custom_client_id"
-
-    fun getBackendUrl(prefs: SharedPreferences): String {
-        val url = prefs.getString(PREFS_KEY_BACKEND_URL, null)
-        return if (!url.isNullOrBlank() && !url.contains("192.168.") && url != "http://10.0.2.2:8000") url.trim().trimEnd('/') else DEFAULT_BACKEND_URL
+    fun initialize(context: Context) {
+        OnlineScannerIdentity.initialize(context)
+        folderConfig = try {
+            context.assets.open("scanner_folder.json").bufferedReader().use { JSONObject(it.readText()) }
+        } catch (_: Exception) { JSONObject() }
     }
 
-    fun setBackendUrl(prefs: SharedPreferences, url: String?) {
-        prefs.edit().putString(PREFS_KEY_BACKEND_URL, url?.trim()?.trimEnd('/')).apply()
-    }
+    fun isConnected(prefs: SharedPreferences): Boolean = if (OnlineScannerIdentity.enabled()) OnlineScannerIdentity.connected(prefs)
+        else !prefs.getString(ACCESS, null).isNullOrBlank() || !prefs.getString(REFRESH, null).isNullOrBlank()
 
-    fun getOperatorStatus(prefs: SharedPreferences): String {
-        val email = getConnectedEmail(prefs)
-        if (email.equals("isaac.eke@attair.com.ng", ignoreCase = true)) return "APPROVED"
-        return prefs.getString(PREFS_KEY_OPERATOR_STATUS, "PENDING") ?: "PENDING"
-    }
+    fun getConnectedEmail(prefs: SharedPreferences): String? = if (OnlineScannerIdentity.enabled()) OnlineScannerIdentity.email(prefs) else prefs.getString(EMAIL, null)
 
-    fun setOperatorStatus(prefs: SharedPreferences, status: String) {
-        prefs.edit().putString(PREFS_KEY_OPERATOR_STATUS, status).apply()
-    }
-
-    fun getClientId(prefs: SharedPreferences): String {
-        val custom = prefs.getString(PREFS_KEY_CUSTOM_CLIENT_ID, null)
-        return if (!custom.isNullOrBlank() && custom != "d3590ed6-52b3-4102-aeff-aad2292ab01c") custom.trim() else DEFAULT_CLIENT_ID
-    }
-
-    fun setCustomClientId(prefs: SharedPreferences, id: String?) {
-        prefs.edit().putString(PREFS_KEY_CUSTOM_CLIENT_ID, id?.trim()).apply()
-    }
-
-    fun isConnected(prefs: SharedPreferences): Boolean {
-        return !prefs.getString(PREFS_KEY_ACCESS_TOKEN, null).isNullOrBlank() ||
-               !prefs.getString(PREFS_KEY_REFRESH_TOKEN, null).isNullOrBlank()
-    }
-
-    fun getConnectedEmail(prefs: SharedPreferences): String? {
-        return prefs.getString(PREFS_KEY_USER_EMAIL, null)
-    }
+    // Access is checked again on app entry and before every upload.
+    fun getOperatorStatus(prefs: SharedPreferences): String = if (isConnected(prefs)) "CHECKING" else "NOT_SIGNED_IN"
 
     fun disconnect(prefs: SharedPreferences) {
-        prefs.edit()
-            .remove(PREFS_KEY_ACCESS_TOKEN)
-            .remove(PREFS_KEY_REFRESH_TOKEN)
-            .remove(PREFS_KEY_EXPIRES_AT)
-            .remove(PREFS_KEY_USER_EMAIL)
-            .remove(PREFS_KEY_CODE_VERIFIER)
-            .remove(PREFS_KEY_OPERATOR_STATUS)
-            .apply()
+        OnlineScannerIdentity.disconnect(prefs)
+        val editor = prefs.edit()
+        for (key in listOf(ACCESS, REFRESH, EXPIRES, EMAIL, SCOPE, VERIFIER, STATE, STATUS, "scanner_server_session", "ms_resource_tenant", "ms_user_id")) editor.remove(key)
+        editor.apply()
     }
 
-    // -------------------------------------------------------------------------
-    // 1. PKCE GENERATION
-    // -------------------------------------------------------------------------
-    private fun generateCodeVerifier(): String {
+    private fun encode(value: String): String = URLEncoder.encode(value, "UTF-8")
+    private fun randomCode(): String {
         val bytes = ByteArray(48)
         SecureRandom().nextBytes(bytes)
         return Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
     }
 
-    private fun generateCodeChallenge(verifier: String): String {
+    fun cancelSignIn(prefs: SharedPreferences) {
+        OnlineScannerIdentity.cancel(prefs)
+        prefs.edit().remove(STATE).remove(VERIFIER).apply()
+    }
+
+    fun onlineServiceEnabled() = OnlineScannerIdentity.enabled()
+    fun onlineServerUrl() = OnlineScannerIdentity.serverUrl()
+
+    suspend fun startSignIn(context: Context, prefs: SharedPreferences) {
+        if (OnlineScannerIdentity.enabled()) { OnlineScannerIdentity.startSignIn(context, prefs); return }
+        val verifier = randomCode()
+        val state = randomCode()
         val digest = MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray(Charsets.US_ASCII))
-        return Base64.encodeToString(digest, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+        val challenge = Base64.encodeToString(digest, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+        prefs.edit().putString(VERIFIER, verifier).putString(STATE, state).apply()
+        val url = FolderAccessPolicy.AUTHORITY + "authorize?" +
+            "client_id=" + encode(DEFAULT_CLIENT_ID) + "&response_type=code&response_mode=query" +
+            "&redirect_uri=" + encode(REDIRECT_URI) + "&scope=" + encode(SCOPES) +
+            "&code_challenge=" + encode(challenge) + "&code_challenge_method=S256&state=" + encode(state) +
+            "&prompt=select_account"
+        CustomTabsIntent.Builder().setShowTitle(true).build().launchUrl(context, Uri.parse(url))
     }
 
-    // -------------------------------------------------------------------------
-    // 2. LAUNCH SIGN-IN VIA CHROME CUSTOM TABS (SSO 1-TAP PICKER)
-    // -------------------------------------------------------------------------
-    fun startSignIn(context: Context, prefs: SharedPreferences) {
-        val verifier = generateCodeVerifier()
-        val challenge = generateCodeChallenge(verifier)
-
-        prefs.edit().putString(PREFS_KEY_CODE_VERIFIER, verifier).apply()
-
-        val clientId = getClientId(prefs)
-        val authUrl = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize?" +
-                "client_id=${URLEncoder.encode(clientId, "UTF-8")}" +
-                "&response_type=code" +
-                "&redirect_uri=${URLEncoder.encode(REDIRECT_URI, "UTF-8")}" +
-                "&response_mode=query" +
-                "&scope=${URLEncoder.encode(SCOPES, "UTF-8")}" +
-                "&code_challenge=${URLEncoder.encode(challenge, "UTF-8")}" +
-                "&code_challenge_method=S256" +
-                "&prompt=select_account"
-
-        val customTabsIntent = CustomTabsIntent.Builder()
-            .setShowTitle(true)
-            .build()
-
-        customTabsIntent.launchUrl(context, Uri.parse(authUrl))
-    }
-
-    // -------------------------------------------------------------------------
-    // 3. HANDLE DEEP LINK REDIRECT (techlogscan://auth?code=...)
-    // -------------------------------------------------------------------------
-    suspend fun handleAuthRedirect(
-        intent: Intent,
-        prefs: SharedPreferences
-    ): Pair<Boolean, String> = withContext(Dispatchers.IO) {
-        val data = intent.data ?: return@withContext Pair(false, "No redirect data")
-        if (data.scheme != "techlogscan" || data.host != "auth") {
-            return@withContext Pair(false, "Unknown scheme")
-        }
-
-        val error = data.getQueryParameter("error")
-        val errorDescription = data.getQueryParameter("error_description")
-        if (error != null) {
-            return@withContext Pair(false, errorDescription ?: error)
-        }
-
-        val code = data.getQueryParameter("code") ?: return@withContext Pair(false, "No auth code returned")
-        val verifier = prefs.getString(PREFS_KEY_CODE_VERIFIER, null)
-            ?: return@withContext Pair(false, "Missing code verifier")
-
-        val clientId = getClientId(prefs)
-
+    private fun tokenPost(fields: String): JSONObject {
+        val conn = URL(FolderAccessPolicy.AUTHORITY + "token").openConnection() as HttpURLConnection
         try {
-            val tokenUrl = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
-            val postData = "client_id=${URLEncoder.encode(clientId, "UTF-8")}" +
-                    "&grant_type=authorization_code" +
-                    "&code=${URLEncoder.encode(code, "UTF-8")}" +
-                    "&redirect_uri=${URLEncoder.encode(REDIRECT_URI, "UTF-8")}" +
-                    "&code_verifier=${URLEncoder.encode(verifier, "UTF-8")}"
+            conn.connectTimeout = 12000
+            conn.readTimeout = 20000
+            conn.instanceFollowRedirects = false
+            conn.requestMethod = "POST"
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
+            conn.outputStream.use { it.write(fields.toByteArray(Charsets.UTF_8)) }
+            val code = conn.responseCode
+            val text = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader()?.use { it.readText() } ?: "{}"
+            val json = JSONObject(text)
+            if (code !in 200..299) throw Exception(FolderAccessPolicy.signInError(json.optString("error_description", "Microsoft sign-in failed.")))
+            return json
+        } finally { conn.disconnect() }
+    }
 
-            val (codeStatus, responseText) = executeHttpPost(tokenUrl, postData)
-            if (codeStatus !in 200..299) {
-                return@withContext Pair(false, "Token error ($codeStatus): $responseText")
-            }
+    private fun saveTokens(prefs: SharedPreferences, result: JSONObject) {
+        val access = result.getString("access_token")
+        require(access.isNotBlank()) { "Microsoft did not confirm sign-in." }
+        val lifetime = result.getLong("expires_in")
+        require(lifetime > 0) { "Microsoft did not return valid token expiry metadata." }
+        val editor = prefs.edit().putString(ACCESS, access)
+            .putLong(EXPIRES, System.currentTimeMillis() + (lifetime - 60).coerceAtLeast(0) * 1000)
+            .putString("ms_resource_tenant", FolderAccessPolicy.RESOURCE_TENANT)
+            .putString(SCOPE, result.optString("scope", prefs.getString(SCOPE, "") ?: ""))
+        if (result.optString("refresh_token").isNotBlank()) editor.putString(REFRESH, result.getString("refresh_token"))
+        editor.apply()
+    }
 
-            val json = JSONObject(responseText)
-            val accessToken = json.getString("access_token")
-            val refreshToken = json.optString("refresh_token", "")
-            val expiresIn = json.optLong("expires_in", 3600L)
-            val expiresAt = System.currentTimeMillis() + (expiresIn - 300) * 1000
-
-            val editor = prefs.edit()
-                .putString(PREFS_KEY_ACCESS_TOKEN, accessToken)
-                .putLong(PREFS_KEY_EXPIRES_AT, expiresAt)
-            if (refreshToken.isNotBlank()) {
-                editor.putString(PREFS_KEY_REFRESH_TOKEN, refreshToken)
-            }
-            editor.apply()
-
-            // Fetch user identity from Graph /me
-            val email = fetchUserEmail(accessToken) ?: "Microsoft Account"
-            prefs.edit().putString(PREFS_KEY_USER_EMAIL, email).apply()
-
-            // Automatically register operator with backend
-            val backendUrl = getBackendUrl(prefs)
-            val operatorStatus = registerWithBackend(backendUrl, email)
-            setOperatorStatus(prefs, operatorStatus)
-
-            return@withContext Pair(true, "$email ($operatorStatus)")
-        } catch (e: Exception) {
-            e.printStackTrace()
-            return@withContext Pair(false, e.message ?: "Authentication failed")
+    suspend fun handleAuthRedirect(intent: Intent, prefs: SharedPreferences): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+        if (OnlineScannerIdentity.enabled()) return@withContext OnlineScannerIdentity.finish(intent, prefs)
+        val data = intent.data ?: return@withContext Pair(false, "No Microsoft sign-in response.")
+        if (data.scheme != "techlogscan" || data.host != "auth") return@withContext Pair(false, "Unexpected sign-in response.")
+        val expectedState = prefs.getString(STATE, null)
+        if (expectedState.isNullOrBlank() || data.getQueryParameter("state") != expectedState)
+            return@withContext Pair(false, "Sign-in response did not match this request.")
+        val verifier = prefs.getString(VERIFIER, null) ?: return@withContext Pair(false, "Sign in again.")
+        prefs.edit().remove(STATE).remove(VERIFIER).apply()
+        if (data.getQueryParameter("error") != null)
+            return@withContext Pair(false, FolderAccessPolicy.signInError(data.getQueryParameter("error_description") ?: "Microsoft sign-in was declined."))
+        val code = data.getQueryParameter("code") ?: return@withContext Pair(false, "Microsoft did not return a sign-in code.")
+        try {
+            val result = tokenPost("client_id=" + encode(DEFAULT_CLIENT_ID) + "&grant_type=authorization_code" +
+                "&code=" + encode(code) + "&redirect_uri=" + encode(REDIRECT_URI) + "&code_verifier=" + encode(verifier))
+            val token = result.getString("access_token")
+            val profile = graphJson("/me?" + "\u0024select=id,mail,userPrincipalName", token)
+            val email = verifiedEmail(profile)
+            disconnect(prefs)
+            saveTokens(prefs, result)
+            prefs.edit().putString(EMAIL, email).putString("ms_user_id", profile.getString("id")).apply()
+            refreshOperatorStatus(prefs)
+            Pair(true, email)
+        } catch (error: Exception) {
+            Pair(false, FolderAccessPolicy.signInError(error.message ?: "Microsoft sign-in failed."))
         }
     }
 
-    // -------------------------------------------------------------------------
-    // 4. AUTOMATIC BACKGROUND TOKEN REFRESH
-    // -------------------------------------------------------------------------
     suspend fun getValidAccessToken(prefs: SharedPreferences): String? = withContext(Dispatchers.IO) {
-        val currentAccessToken = prefs.getString(PREFS_KEY_ACCESS_TOKEN, null)
-        val expiresAt = prefs.getLong(PREFS_KEY_EXPIRES_AT, 0L)
-
-        if (!currentAccessToken.isNullOrBlank() && System.currentTimeMillis() < expiresAt) {
-            return@withContext currentAccessToken
-        }
-
-        val refreshToken = prefs.getString(PREFS_KEY_REFRESH_TOKEN, null)
-        if (refreshToken.isNullOrBlank()) {
-            return@withContext currentAccessToken
-        }
-
-        // Token expired or close to expiration -> Auto refresh with zero user intervention!
-        val clientId = getClientId(prefs)
+        if (OnlineScannerIdentity.enabled()) return@withContext OnlineScannerIdentity.bearer(prefs)
+        tokenMutex.withLock {
+        if (prefs.getString("ms_resource_tenant", "") != FolderAccessPolicy.RESOURCE_TENANT) return@withLock null
+        val access = prefs.getString(ACCESS, null)
+        if (!access.isNullOrBlank() && System.currentTimeMillis() < prefs.getLong(EXPIRES, 0L)) return@withLock access
+        val refresh = prefs.getString(REFRESH, null) ?: return@withLock null
         try {
-            val tokenUrl = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
-            val postData = "client_id=${URLEncoder.encode(clientId, "UTF-8")}" +
-                    "&grant_type=refresh_token" +
-                    "&refresh_token=${URLEncoder.encode(refreshToken, "UTF-8")}" +
-                    "&scope=${URLEncoder.encode(SCOPES, "UTF-8")}"
-
-            val (status, responseText) = executeHttpPost(tokenUrl, postData)
-            if (status in 200..299) {
-                val json = JSONObject(responseText)
-                val newAccessToken = json.getString("access_token")
-                val newRefreshToken = json.optString("refresh_token", refreshToken)
-                val expiresIn = json.optLong("expires_in", 3600L)
-                val newExpiresAt = System.currentTimeMillis() + (expiresIn - 300) * 1000
-
-                prefs.edit()
-                    .putString(PREFS_KEY_ACCESS_TOKEN, newAccessToken)
-                    .putString(PREFS_KEY_REFRESH_TOKEN, newRefreshToken)
-                    .putLong(PREFS_KEY_EXPIRES_AT, newExpiresAt)
-                    .apply()
-
-                return@withContext newAccessToken
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
+            val result = tokenPost("client_id=" + encode(DEFAULT_CLIENT_ID) + "&grant_type=refresh_token" +
+                "&refresh_token=" + encode(refresh))
+            saveTokens(prefs, result)
+            result.getString("access_token")
+        } catch (_: Exception) { null }
         }
-
-        return@withContext currentAccessToken
     }
 
-    private fun fetchUserEmail(accessToken: String): String? {
+    private fun graphJson(path: String, token: String, method: String = "GET", payload: JSONObject? = null): JSONObject {
+        val conn = URL(GRAPH + path).openConnection() as HttpURLConnection
         try {
-            val conn = URL("https://graph.microsoft.com/v1.0/me").openConnection() as HttpURLConnection
-            conn.requestMethod = "GET"
-            conn.setRequestProperty("Authorization", "Bearer $accessToken")
+            conn.connectTimeout = 12000
+            conn.readTimeout = 20000
+            conn.instanceFollowRedirects = false
+            conn.requestMethod = method
+            conn.setRequestProperty("Authorization", "Bearer " + token)
             conn.setRequestProperty("Accept", "application/json")
-            if (conn.responseCode in 200..299) {
-                val body = conn.inputStream.bufferedReader().readText()
-                val json = JSONObject(body)
-                return json.optString("userPrincipalName").ifBlank {
-                    json.optString("mail").ifBlank {
-                        json.optString("displayName").ifBlank { null }
+            if (payload != null) {
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+            }
+            val code = conn.responseCode
+            val text = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader()?.use { it.readText() } ?: "{}"
+            val result = JSONObject(text)
+            if (code !in 200..299) throw GraphException(code, result.optJSONObject("error")?.optString("message") ?: "Microsoft folder access failed (HTTP " + code + ").")
+            return result
+        } finally { conn.disconnect() }
+    }
+
+    private fun verifiedEmail(profile: JSONObject): String {
+        require(profile.optString("id").isNotBlank()) { "Microsoft did not verify the account identity." }
+        val email = profile.optString("mail").ifBlank { profile.optString("userPrincipalName") }.trim().lowercase()
+        require(email.contains("@") && !email.contains(" ")) { "Microsoft did not return the account email." }
+        return email
+    }
+
+    private fun folderPath(): String = "/drives/" + Uri.encode(folderConfig.getString("drive_id")) +
+        "/items/" + Uri.encode(folderConfig.getString("folder_id"))
+
+    private fun permissionMatches(profile: JSONObject, permission: JSONObject): Boolean {
+        val roles = permission.optJSONArray("roles") ?: JSONArray()
+        val people = mutableListOf<JSONObject>()
+        for (key in listOf("grantedToV2", "grantedTo")) permission.optJSONObject(key)?.let { people.add(it) }
+        for (key in listOf("grantedToIdentitiesV2", "grantedToIdentities")) {
+            val values = permission.optJSONArray(key) ?: continue
+            for (index in 0 until values.length()) values.optJSONObject(index)?.let { people.add(it) }
+        }
+        val link = permission.optJSONObject("link")
+        val grant = FolderAccessPolicy.Grant(
+            roles = (0 until roles.length()).map { roles.optString(it) },
+            subjects = people.map { person -> FolderAccessPolicy.Subject(
+                userId = person.optJSONObject("user")?.optString("id") ?: "",
+                emails = listOf("user", "siteUser").flatMap { key ->
+                    val identity = person.optJSONObject(key)
+                    listOf(identity?.optString("email") ?: "", identity?.optString("loginName") ?: "")
+                }, group = person.has("group") || person.has("siteGroup")) },
+            hasLink = link != null, linkScope = link?.optString("scope") ?: "",
+            inherited = permission.optJSONObject("inheritedFrom") != null,
+            invitationEmail = permission.optJSONObject("invitation")?.optString("email") ?: "",
+            expiration = permission.optString("expirationDateTime"))
+        return FolderAccessPolicy.matches(profile.optString("id"), verifiedEmail(profile), grant)
+    }
+
+    private fun hasFolderScope(prefs: SharedPreferences): Boolean {
+        return FolderAccessPolicy.hasWriteScope(prefs.getString(SCOPE, "") ?: "")
+    }
+
+    suspend fun refreshOperatorStatus(prefs: SharedPreferences): OperatorSyncResult = withContext(Dispatchers.IO) {
+        if (OnlineScannerIdentity.enabled()) return@withContext OnlineScannerIdentity.status(prefs)
+        statusMutex.withLock {
+            if (!isConnected(prefs)) return@withLock OperatorSyncResult("NOT_SIGNED_IN", "Sign in with the Microsoft email approved by the owner.")
+            if (listOf("drive_id", "folder_id", "owner_id").any { folderConfig.optString(it).isBlank() })
+                return@withLock OperatorSyncResult("NOT_CONFIGURED", "The owner must connect the scanner folder and build the app from the access panel.")
+            if (!hasFolderScope(prefs)) return@withLock OperatorSyncResult("SIGN_IN_REQUIRED", "Sign out and review Microsoft's shared-file consent when signing in again.")
+            try {
+                val token = getValidAccessToken(prefs) ?: return@withLock OperatorSyncResult("SIGN_IN_REQUIRED", "Microsoft sign-in expired. Sign in again.")
+                val profile = graphJson("/me?" + "\u0024select=id,mail,userPrincipalName", token)
+                val email = verifiedEmail(profile)
+                prefs.edit().putString(EMAIL, email).putString("ms_user_id", profile.getString("id")).apply()
+                val folder = graphJson(folderPath() + "?" + "\u0024select=id,folder,parentReference", token)
+                require(folder.optString("id") == folderConfig.getString("folder_id") && folder.has("folder") &&
+                    folder.optJSONObject("parentReference")?.optString("driveId") == folderConfig.getString("drive_id")) { "Microsoft returned a different scanner folder." }
+                var approved = profile.getString("id") == folderConfig.getString("owner_id")
+                if (!approved) {
+                    var next: String? = folderPath() + "/permissions"
+                    while (next != null && !approved) {
+                        val page = graphJson(next, token)
+                        val permissions = page.optJSONArray("value") ?: JSONArray()
+                        approved = (0 until permissions.length()).any { index ->
+                            permissions.optJSONObject(index)?.let { permissionMatches(profile, it) } == true
+                        }
+                        val link = page.optString("@odata.nextLink")
+                        next = if (link.isBlank()) null else {
+                            require(link.startsWith(GRAPH + "/")) { "Unexpected Microsoft permissions page." }
+                            link.removePrefix(GRAPH)
+                        }
                     }
                 }
+                val status = if (approved) "APPROVED" else "DENIED"
+                prefs.edit().putString(STATUS, status).apply()
+                OperatorSyncResult(status, if (approved) "Access granted to the ATTAIR scanner folder." else
+                    "This Microsoft account is not individually approved for the scanner folder.")
+            } catch (error: GraphException) {
+                OperatorSyncResult(if (error.statusCode == 401) "SIGN_IN_REQUIRED" else if (error.statusCode in listOf(403, 404)) "DENIED" else "CONNECTION_ERROR",
+                    error.message ?: "Microsoft could not confirm folder access.")
+            } catch (error: Exception) {
+                OperatorSyncResult("CONNECTION_ERROR", error.message ?: "Folder access could not be verified.")
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-        return null
-    }
-
-    // -------------------------------------------------------------------------
-    // 5. BACKEND UPLOAD PIPELINE (STREAMS DIRECTLY TO ISAAC EKE'S ONEDRIVE APPFOLDER)
-    // -------------------------------------------------------------------------
-    suspend fun uploadPdfToBackend(
-        prefs: SharedPreferences,
-        pdfFile: File,
-        aircraftFolder: String,
-        fileName: String,
-        isPatch: Boolean
-    ): Pair<Boolean, String> = withContext(Dispatchers.IO) {
-        val email = getConnectedEmail(prefs) ?: return@withContext Pair(false, "Operator not signed in")
-        val status = getOperatorStatus(prefs)
-        if (status != "APPROVED" && !email.equals("isaac.eke@attair.com.ng", ignoreCase = true)) {
-            return@withContext Pair(false, "Upload blocked: awaiting approval from Isaac Eke")
-        }
-
-        val backendUrl = getBackendUrl(prefs)
-        val uploadUrl = "$backendUrl/api/scans/upload"
-
-        try {
-            val boundary = "==EnuguScanner${System.currentTimeMillis()}=="
-            val conn = URL(uploadUrl).openConnection() as HttpURLConnection
-            conn.requestMethod = "POST"
-            conn.doOutput = true
-            conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
-            conn.connectTimeout = 15000
-            conn.readTimeout = 45000
-
-            conn.outputStream.use { os ->
-                writeFormField(os, boundary, "operator_email", email)
-                writeFormField(os, boundary, "aircraft", aircraftFolder)
-                writeFormField(os, boundary, "log_number", fileName)
-                writeFormField(os, boundary, "is_patch", if (isPatch) "true" else "false")
-                writeFileField(os, boundary, "file", fileName, pdfFile)
-                os.write("--$boundary--\r\n".toByteArray(Charsets.UTF_8))
-            }
-
-            val respCode = conn.responseCode
-            val respBody = (if (respCode in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader()?.readText() ?: ""
-
-            if (respCode in 200..299) {
-                val json = JSONObject(respBody)
-                val msg = json.optString("message", "Uploaded to Isaac Eke's OneDrive AppFolder")
-                return@withContext Pair(true, msg)
-            } else if (respCode == 403) {
-                return@withContext Pair(false, "Upload blocked: awaiting approval from Isaac Eke")
-            } else {
-                return@withContext Pair(false, "Backend ($respCode): $respBody")
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-            return@withContext Pair(false, "Connection to backend failed (${e.message ?: "network error"})")
         }
     }
 
-    private fun registerWithBackend(backendUrl: String, email: String): String {
-        try {
-            val conn = URL("$backendUrl/api/auth/register").openConnection() as HttpURLConnection
-            conn.requestMethod = "POST"
-            conn.doOutput = true
-            conn.setRequestProperty("Content-Type", "application/json")
-            conn.connectTimeout = 8000
-            conn.readTimeout = 8000
-            val json = JSONObject().apply {
-                put("email", email)
-                put("name", email.substringBefore("@"))
-            }
-            conn.outputStream.use { os ->
-                os.write(json.toString().toByteArray(Charsets.UTF_8))
-            }
-            if (conn.responseCode in 200..299) {
-                val resp = conn.inputStream.bufferedReader().readText()
-                val respJson = JSONObject(resp)
-                return respJson.optString("status", "PENDING")
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-        return if (email.equals("isaac.eke@attair.com.ng", ignoreCase = true)) "APPROVED" else "PENDING"
-    }
+    fun getConnectedAccountId(prefs: SharedPreferences): String? = if (OnlineScannerIdentity.enabled()) OnlineScannerIdentity.account(prefs) else prefs.getString("ms_user_id", null)
 
-    private fun writeFormField(os: java.io.OutputStream, boundary: String, name: String, value: String) {
-        val header = "--$boundary\r\nContent-Disposition: form-data; name=\"$name\"\r\n\r\n$value\r\n"
-        os.write(header.toByteArray(Charsets.UTF_8))
-    }
-
-    private fun writeFileField(os: java.io.OutputStream, boundary: String, name: String, filename: String, file: File) {
-        val header = "--$boundary\r\nContent-Disposition: form-data; name=\"$name\"; filename=\"$filename\"\r\nContent-Type: application/pdf\r\n\r\n"
-        os.write(header.toByteArray(Charsets.UTF_8))
-        file.inputStream().use { it.copyTo(os) }
-        os.write("\r\n".toByteArray(Charsets.UTF_8))
-    }
-
-    // -------------------------------------------------------------------------
-    // HTTP UTILITIES
-    // -------------------------------------------------------------------------
-    private fun executeHttpPost(urlString: String, postData: String): Pair<Int, String> {
-        val conn = URL(urlString).openConnection() as HttpURLConnection
-        conn.requestMethod = "POST"
-        conn.doOutput = true
-        conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
-        conn.outputStream.use { os ->
-            os.write(postData.toByteArray(Charsets.UTF_8))
-        }
-        val status = conn.responseCode
-        val stream = if (status in 200..299) conn.inputStream else conn.errorStream
-        val text = stream?.bufferedReader()?.readText() ?: ""
-        return Pair(status, text)
-    }
-
-    private fun executeHttpGet(urlString: String, token: String): Pair<Int, String> {
-        val conn = URL(urlString).openConnection() as HttpURLConnection
-        conn.requestMethod = "GET"
-        conn.setRequestProperty("Authorization", "Bearer $token")
-        conn.setRequestProperty("Accept", "application/json")
-        val status = conn.responseCode
-        val stream = if (status in 200..299) conn.inputStream else conn.errorStream
-        val text = stream?.bufferedReader()?.readText() ?: ""
-        return Pair(status, text)
-    }
-
-    private fun executeHttpPut(urlString: String, token: String, body: ByteArray): Pair<Int, String> {
-        val conn = URL(urlString).openConnection() as HttpURLConnection
-        conn.requestMethod = "PUT"
-        conn.doOutput = true
-        conn.setRequestProperty("Authorization", "Bearer $token")
-        conn.setRequestProperty("Content-Type", "application/pdf")
-        conn.outputStream.use { os ->
-            os.write(body)
-        }
-        val status = conn.responseCode
-        val stream = if (status in 200..299) conn.inputStream else conn.errorStream
-        val text = stream?.bufferedReader()?.readText() ?: ""
-        return Pair(status, text)
+    fun destination(): Pair<String, String>? {
+        val drive = folderConfig.optString("drive_id")
+        val folder = folderConfig.optString("folder_id")
+        return if (drive.isNotBlank() && folder.isNotBlank()) drive to folder else null
     }
 }

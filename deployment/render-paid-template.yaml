@@ -1,0 +1,24 @@
+# Creating this service incurs recurring hosting and persistent-disk charges.
+# Reuse an existing scanner service and its disk when one is already deployed.
+services:
+  - type: web
+    name: enugu-air-scanner
+    rootDir: backend
+    plan: starter
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    disk:
+      name: scanner-data
+      mountPath: /var/data/scanner
+      sizeGB: 1
+    envVars:
+      - key: TENANT_ID
+        value: 38de9dec-d800-439b-a669-60f628a90e72
+      - key: CLIENT_ID
+        value: dc7101d3-3bb7-462f-92e8-374958f4ddb5
+      - key: TARGET_ONEDRIVE_USER
+        value: isaac.eke@attair.com.ng
+      - key: SCANNER_DATA_DIR
+        value: /var/data/scanner

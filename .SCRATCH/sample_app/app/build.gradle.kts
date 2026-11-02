@@ -4,6 +4,11 @@ plugins {
   alias(libs.plugins.kotlin.serialization)
 }
 
+// A fresh directory outside Drive sync avoids locks on Android packaging scratch files.
+providers.gradleProperty("scannerBuildDir").orNull?.let { scannerBuildDir ->
+  layout.buildDirectory.set(file(scannerBuildDir))
+}
+
 android {
   namespace = "com.example.enuguairscannertest"
   compileSdk = 36
@@ -11,8 +16,8 @@ android {
     applicationId = "com.enugu.scanner"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    versionCode = 5
+    versionName = "1.4"
   }
 
   buildTypes {
@@ -70,6 +75,7 @@ dependencies {
   // Local tests: jUnit, coroutines, Android runner
   testImplementation(libs.junit)
   testImplementation(libs.kotlinx.coroutines.test)
+  testImplementation("org.json:json:20240303")
 
   // Instrumented tests: jUnit rules and runners
   androidTestImplementation(libs.androidx.test.core)
@@ -90,4 +96,5 @@ dependencies {
   implementation("androidx.camera:camera-view:$cameraVersion")
   implementation("androidx.documentfile:documentfile:1.0.1")
   implementation("androidx.browser:browser:1.8.0")
+  implementation("androidx.work:work-runtime-ktx:2.10.5")
 }

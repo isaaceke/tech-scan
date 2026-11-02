@@ -1,0 +1,21 @@
+{
+  "name": "enugu-techlog-scanner",
+  "main": "src/worker.mjs",
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": {"enabled": false},
+  "durable_objects": {"bindings": [{"name": "SCANNER", "class_name": "ScannerState"}]},
+  "migrations": [{"tag": "v1", "new_sqlite_classes": ["ScannerState"]}],
+  "rules": [{"type": "Text", "globs": ["**/*.html", "**/*.txt"], "fallthrough": true}],
+  "vars": {
+    "CLIENT_ID": "dc7101d3-3bb7-462f-92e8-374958f4ddb5",
+    "OWNER_TENANT": "38de9dec-d800-439b-a669-60f628a90e72",
+    "OWNER_ID": "a755f190-8da1-4ee0-b451-219fab4f02b7",
+    "OWNER_EMAIL": "isaac.eke@attair.com.ng",
+    "DRIVE_ID": "b!iTsyqtuaOkijKCZlms8VynloUGxkPmVDsd_G2kUpaznCeWPCvq0XRbGuGGWLvC9k",
+    "FOLDER_ID": "01XSZCHKCKFRBJHQPHG5D2OXQPLAT6B6LI",
+    "FOLDER_URL": "https://attairtec-my.sharepoint.com/personal/isaac_eke_attair_com_ng/Documents/Apps/ATTAIR%20Techlog%20OneDrive%20Connector"
+  }
+}
