@@ -472,3 +472,8 @@ Here is the update on the completion of the Google OAuth operator sign-in integr
 - Android Client: **52/52** tests passing.
 - Python Suite: **77/77** tests passing.
 - Total regression tests: **155/155** passing.
+
+### 5. Production Activation (2026-11-02 12:51:00 +01:00)
+- Registered Google Web Client ID and Client Secret deployed directly to Cloudflare Workers encrypted secrets via `wrangler secret put`.
+- Production health check `https://enugu-techlog-scanner.isaaceke21.workers.dev/health` verified with `google_auth_enabled: true`.
+- Live authorization challenge generation verified on `/api/auth/google/start`.
